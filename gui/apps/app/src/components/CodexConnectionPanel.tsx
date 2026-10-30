@@ -96,7 +96,7 @@ function ConnectionPanel({ provider }: { provider: "codex" | "cursor" }) {
   const state = auth.data?.state;
   const rejected = !cursor && Boolean(threadId) && !signedIn && state === "connected";
   const close = () => { setApiKey(""); setOpen(false); };
-  if (!accountId || !account.data?.ready) return null;
+  if ((!accountId && !account.data?.selfHosted) || !account.data?.ready) return null;
   return <PersistentResponsiveDrawerShell
     open={open} onOpenChange={value => { if (!value) close(); }} labelledBy={titleId} describedBy={descriptionId}
     backdropClassName="bg-black/25 backdrop-blur-xs"

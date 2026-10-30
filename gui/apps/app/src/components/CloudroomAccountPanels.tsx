@@ -16,6 +16,6 @@ export function CloudroomAccountPanels() {
       getBbDesktopInfo()?.focusWindow?.();
     }
   }, [signingIn, accountId]);
-  if (!accountId) return null;
+  if (!accountId && !status.data?.selfHosted) return null;
   return <><CodexConnectionPanel /><CursorConnectionPanel /></>;
 }

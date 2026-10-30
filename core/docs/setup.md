@@ -19,6 +19,93 @@ It checks the download's checksum, installs Node.js 24 if it is missing, creates
 
 To build from source instead, follow the manual steps below.
 
+### Bootstrap a lab host with Codex and Claude Code
+
+[`install/lab-setup.sh`](../install/lab-setup.sh) wraps the Core installer and
+installs both agent executables. Copy this script to each fresh Ubuntu machine;
+it also works without a repository checkout. Ubuntu 24.04 is the tested target,
+with systemd, cgroup v2, and x86_64 or aarch64. It is not a general distribution
+installer or a container provisioner.
+
+From this checkout, using GPT-6 Astra as the fallback model:
+
+```sh
+sudo bash core/install/lab-setup.sh --codex-model gpt-6-astra
+```
+
+Or copy it to a lab host and run it there:
+
+```sh
+scp core/install/lab-setup.sh admin@lab-host:lab-setup.sh
+ssh -t admin@lab-host 'sudo bash lab-setup.sh --codex-model gpt-6-astra'
+```
+
+The [official GPT-6 Astra model ID](https://developers.openai.com/api/docs/models/gpt-6-astra)
+is `gpt-6-astra`. Your connected Codex account must support it. The model selected
+in the desktop GUI overrides this fallback for the session; `--codex-model`
+only supplies the default for requests that omit a model. It does not lock
+all threads to the same model.
+
+Other Ubuntu versions require `--allow-untested-ubuntu`. For Ubuntu 26.04,
+run from the repository root:
+
+```sh
+sudo bash core/install/lab-setup.sh \
+  --codex-model gpt-6-astra \
+  --allow-untested-ubuntu
+```
+
+The script pins Codex to
+0.154.0 and Claude Code to 2.1.280, the versions recorded in this checkout's
+guides. Override with `--codex-version X.Y.Z` or `--claude-version X.Y.Z` after
+checking compatibility. Use `--core-version X.Y.Z` to deploy the same Core
+release across hosts; otherwise it downloads the newest released Core.
+
+The script preserves the localhost-only API and local history configuration,
+prepares the agent homes, restarts Core, and verifies authenticated readiness.
+It does not sign in or run an inference task. Complete the printed Tailscale
+and desktop pairing steps, then use **Connect Codex** and **Connect Claude**
+with Cloud selected. Run a small task with each to verify end-to-end access.
+These GUI login flows require compatible Core and desktop releases.
+
+Each host has its own token, workspaces, and history; this does not create a
+shared worker pool. If setup fails, changes remain in place. Do not delete an
+existing token or history to rerun the bootstrap.
+
+If the script reports **Core already exists**, it found `/etc/cloudroom/core.env`.
+To finish installing agents on an existing Core, wait for all work to finish,
+stop the service, and rerun the updated script with `--existing-core`:
+
+```sh
+sudo systemctl stop cloudroom.service
+sudo bash core/install/lab-setup.sh \
+  --codex-model gpt-6-astra \
+  --allow-untested-ubuntu \
+  --existing-core
+```
+
+This mode requires the Core binary, service unit, storage policy, and agent
+account to exist. It skips Core installation, installs only missing agent
+executables, adds only missing Codex settings, and starts Core again. Existing
+tokens, logins, history, and configured model defaults are preserved. Custom
+agent paths or nonstandard listen addresses require manual setup. If an earlier
+failure left Core provisioning incomplete, finish the manual steps below first.
+If this run fails, Core may remain stopped; inspect the error before restarting.
+
+If the journal reports `agent paths must share the monitored filesystem`, check
+`findmnt -T /tmp`: some Ubuntu hosts use a separate tmpfs there. The lab script
+now handles `/tmp` or `/var/tmp` on a different filesystem by preparing
+root-owned, sticky temporary directories under `/var/cache/cloudroom-tmp` and
+adding a systemd `BindPaths` override for Cloudroom only. The host's temporary
+directories stay unchanged. `/var/cache` must share the workspace filesystem;
+other split-filesystem layouts still require manual storage configuration.
+After this error, stop Core and rerun the updated script with `--existing-core`
+as above. Do not disable disk protection to bypass the check.
+
+Use the [upgrade procedure](#upgrade) for Core updates and
+[harnesses.md](harnesses.md) for manual agent setup. Authentication, network
+pairing, and a real task remain necessary even after readiness succeeds.
+
 ## 1. Install tools and build
 
 Run these commands in an SSH terminal on the VM, as your administrator account:
@@ -176,7 +263,7 @@ Never use `tailscale funnel` for Core: it opens the API to the whole internet.
 
 ## Connect the desktop app
 
-In the [Cloudroom app](https://www.cloudroom.dev/download) (v83 or newer), open **Settings → Cloudroom account → Connect your own Core**. Enter the HTTPS URL and the token from `sudo grep ^CLOUDROOM_TOKEN= /etc/cloudroom/core.env`. No Cloudroom account is needed. Cloud threads then run on this machine and share its files.
+In the [Cloudroom app](https://www.cloudroom.dev/download) (v83 or newer), use **Or connect your own Core** on the sign-in screen, or open **Settings → Account**. The form appears when you are signed out of the hosted Cloudroom account and no sign-in is in progress. Older builds, including the reported v131 build, may block Settings behind a sign-in screen without this form; build this checkout using [the Mac installer script](../../gui/README.md#build-a-local-mac-installer) to include the onboarding fix. If signed in, finish any work you need to manage there, then use **Sign out** at the bottom of the Account page. Existing hosted cloud threads remain on their original account and VM. Enter the HTTPS URL and the token from `sudo grep ^CLOUDROOM_TOKEN= /etc/cloudroom/core.env`. No Cloudroom account is needed. Cloud threads then run on this machine and share its files.
 
 ## Upgrade
 

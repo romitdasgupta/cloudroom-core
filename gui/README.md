@@ -31,3 +31,31 @@ pnpm exec turbo run test --filter=@cloudroom/scripts --filter=@cloudroom/config 
 Desktop integration tests open real apps, so run them only in a test environment. The sync and preview helpers in `apps/server/src/assets/` are copies from the core, so change them there.
 
 The build makes runnable bundles, not a signed installer.
+
+## Build a local Mac installer
+
+On an Apple Silicon Mac with the prerequisites above, run from the repository
+root:
+
+```sh
+bash gui/scripts/build-macos-local.sh
+```
+
+The script installs the pinned pnpm dependencies, builds and typechecks the
+app, runs the self-hosted connection regression tests and configuration tests,
+and packages macOS arm64 DMG/ZIP artifacts under
+`gui/apps/desktop/release.noindex/`. It also checks the packaged npm runtime.
+It never publishes a release or replaces your installed app automatically.
+Open the resulting DMG when you are ready to install it. Local builds use an
+available keychain signing identity; without one, the app is unsigned and
+macOS may block opening it. See [desktop packaging](apps/desktop/README.md#packaging).
+
+macOS packaging must run on an Apple Silicon Mac: the packaging hook runs the
+bundled Electron executable to verify native dependencies. A successful Linux
+source build cannot produce a verified Mac installer.
+
+This checkout exposes **Or connect your own Core** directly on the sign-in
+screen. Enter the Core HTTPS URL and API token there; successful pairing opens
+the app without a hosted Cloudroom account. It is also available under
+**Settings → Account** when signed out. Older desktop builds may hide Settings
+behind onboarding and need this fix before that route is usable.

@@ -10,6 +10,7 @@ import { ClaudeConnectionButton, useClaudeConnection } from "@/components/Claude
 import { openCodexConnection } from "@/components/CodexConnectionPanel";
 import { selectCloudForNewThreads } from "@/components/promptbox/NewThreadComposer";
 import { ImportChats } from "@/components/settings/ImportChats";
+import { SelfHostedCoreForm } from "@/components/settings/SelfHostedCoreForm";
 import { BbLogo } from "@/components/ui/bb-logo";
 import { appToast } from "@/components/ui/app-toast";
 import { useCreateProject } from "@/hooks/mutations/project-mutations";
@@ -89,10 +90,12 @@ export function Onboarding() {
   const account = useCloudroomAccount();
   const locked = account.isSuccess && !account.data.account && !account.data.selfHosted;
   // Only the desktop app opens setup by itself: "skipped" is saved per browser, so phones and other browsers would see it again.
-  const firstRun = !dismissed && getBbDesktopInfo() !== null && projects !== undefined && projects.length === 0;
+  const firstRun = account.isSuccess && !account.data.selfHosted && !dismissed && getBbDesktopInfo() !== null && projects !== undefined && projects.length === 0;
   // Stay open once shown: adding a folder or importing chats creates projects, which would otherwise end the first run mid-step.
   useEffect(() => { if (firstRun) setOpen(true); }, [firstRun, setOpen]);
-  const visible = locked || open || firstRun;
+  // Hosted onboarding has account-only steps. Pairing a self-hosted Core
+  // completes this gate; agents can be connected from the app's settings.
+  const visible = !account.data?.selfHosted && (locked || open || firstRun);
   if (!visible) return null;
   return <Setup locked={locked} close={() => { setDismissed(true); setOpen(false); }} />;
 }
@@ -375,6 +378,9 @@ function AccountStep({ email, signingIn, next }: { email: string | null; signing
           <div className="mt-8 flex flex-col items-start gap-4">
             <Cta onClick={start}>Sign in with browser <Icon name="ArrowRight" aria-hidden /></Cta>
             <Note>Already signed in there? You come right back.</Note>
+          </div>
+          <div className="mt-8 max-w-[420px] rounded-lg bg-background p-4 text-foreground">
+            <SelfHostedCoreForm connected={false} ready={false} error={null} />
           </div>
         </>
       )}
