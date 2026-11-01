@@ -103,7 +103,8 @@ jobs:
 
   release:
     needs: [version, build]
-    if: ${{ github.event_name == 'push' || inputs.release }}
+    # Publishes whichever platforms built, so one failing platform doesn't hold back the others.
+    if: ${{ !cancelled() && needs.version.result == 'success' && (github.event_name == 'push' || inputs.release) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
