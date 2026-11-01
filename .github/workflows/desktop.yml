@@ -1,0 +1,122 @@
+name: Desktop build
+
+# Builds installable desktop apps from this repository (macOS arm64, Linux x64, Windows x64) and, optionally,
+# publishes them as a GitHub Release here. Builds are unsigned (macOS: ad-hoc) and check this repository's
+# releases for updates, never the official ones. See gui/docs/build-and-install.md.
+on:
+  # Pushing a desktop-build-* tag builds that commit and publishes a release, even before this file is on the
+  # default branch (where GitHub needs it for the Run workflow button).
+  push:
+    tags: ['desktop-build-*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version shown in the app, like v1001. Empty: v<1000 + run number>."
+        required: false
+        default: ""
+      release:
+        description: "Publish the builds as a GitHub Release in this repository"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+env:
+  # The app and electron-updater look for updates here. A fork's releases have no update feeds, so its builds
+  # simply never offer one, and never fetch the official app.
+  BB_DESKTOP_UPDATE_BASE_URL: https://github.com/${{ github.repository }}/releases/latest/download/
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.pick.outputs.version }}
+    steps:
+      - id: pick
+        env:
+          INPUT: ${{ inputs.version }}
+          RUN: ${{ github.run_number }}
+        run: |
+          v="${INPUT:-v$((1000 + RUN))}"
+          [[ "$v" =~ ^v[1-9][0-9]*$ ]] || { echo "::error::version must look like v1001"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            name: macos-arm64
+            builder: --mac --arm64 --ad-hoc
+          - os: ubuntu-24.04
+            name: linux-x64
+            builder: --linux --x64
+          - os: windows-latest
+            name: windows-x64
+            builder: --win --x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: gui
+    env:
+      BB_CLOUDROOM_STAMP: "1"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: gui/.nvmrc
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+        with:
+          package_json_file: gui/package.json
+          cache: true
+          cache_dependency_path: gui/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      # The package scripts bump .cloudroom-version by one; write the version directly instead.
+      - name: Pin the version
+        run: echo "${{ needs.version.outputs.version }}" > apps/desktop/.cloudroom-version
+      - name: Build the runtime and app
+        working-directory: gui/apps/desktop
+        run: |
+          pnpm run prepare-runtime
+          pnpm run build
+      - name: Package
+        working-directory: gui/apps/desktop
+        run: node scripts/run-electron-builder.mjs ${{ matrix.builder }} --publish never
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cloudroom-${{ needs.version.outputs.version }}-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            gui/apps/desktop/release.noindex/*.dmg
+            gui/apps/desktop/release.noindex/*.zip
+            gui/apps/desktop/release.noindex/*.AppImage
+            gui/apps/desktop/release.noindex/*.exe
+
+  release:
+    needs: [version, build]
+    if: ${{ github.event_name == 'push' || inputs.release }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          ls -la dist
+          gh release create "desktop-$VERSION" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Cloudroom $VERSION (self-built)" \
+            --notes "Unsigned build of $GITHUB_REF_NAME at $GITHUB_SHA. macOS: open the .dmg, drag Cloudroom to Applications, then run: xattr -dr com.apple.quarantine /Applications/Cloudroom.app. See gui/docs/build-and-install.md."
