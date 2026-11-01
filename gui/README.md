@@ -1,6 +1,6 @@
 # Build Cloudroom from source
 
-You need macOS on Apple Silicon, Git, Node.js 22.19+, pnpm 9.15.9, Python 3.11+, and Xcode Command Line Tools. Building needs no Cloudroom account.
+You need macOS on Apple Silicon, Git, Node.js 22.19+, pnpm 9.15.9, and Xcode Command Line Tools. Any `python3` builds; dev mode runs the sync and preview helpers on your `python3`, and Codex settings sync needs 3.11+. Building needs no Cloudroom account.
 
 Run these from this folder:
 
@@ -31,3 +31,7 @@ pnpm exec turbo run test --filter=@cloudroom/scripts --filter=@cloudroom/config 
 Desktop integration tests open real apps, so run them only in a test environment. The sync and preview helpers in `apps/server/src/assets/` are copies from the core, so change them there.
 
 The build makes runnable bundles, not a signed installer.
+
+## Install your own build
+
+To package the app for macOS, Linux, or Windows and install it on your computers, follow [build and install your own Cloudroom](docs/build-and-install.md). Set `BB_DESKTOP_UPDATE_BASE_URL` for every packaged build, or the official app replaces yours. `.github/workflows/desktop.yml` builds all three on GitHub.

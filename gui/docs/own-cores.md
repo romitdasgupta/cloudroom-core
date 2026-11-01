@@ -1,6 +1,6 @@
 # Your own Cores as the cloud
 
-Cloud threads can run on Cores you host: a Linux VM or container on your computer, a VPS, or a public-cloud VM. Register as many as you like (up to 32) in **Settings → Machines → Connect your own Core**, with or without a Cloudroom account. Each machine runs one Core that all its threads share. There is no per-thread sandbox, sleep, or wake; those still need Cloudroom's website. Install a Core with [core/docs/setup.md](../../core/docs/setup.md).
+Cloud threads can run on Cores you host: a Linux VM or container on your computer, a VPS, or a public-cloud VM. Register as many as you like (up to 32) in **Settings → Machines → Connect your own Core**, with or without a Cloudroom account. Each machine runs one Core that all its threads share. There is no per-thread sandbox, sleep, or wake; those still need Cloudroom's website. Install a Core with [core/docs/setup.md](../../core/docs/setup.md). To run a build with these changes on your own computers, see [build and install your own Cloudroom](build-and-install.md).
 
 Everything here lives in `apps/server/src/services/cloudroom/` unless noted.
 

@@ -59,7 +59,7 @@ sudo bash install.sh
 
 Then [connect the app](core/docs/setup.md#connect-the-desktop-app) with your server's URL and token. Full guide: [setup](core/docs/setup.md). Don't want to host it? [Get hosted Cloudroom free](https://www.cloudroom.dev).
 
-**Build from source.** The app: see [gui/README.md](gui/README.md). The core needs Rust 1.89+:
+**Build from source.** The app: [build and install your own](gui/docs/build-and-install.md) for macOS, Linux, or Windows; dev mode is in [gui/README.md](gui/README.md). The core needs Rust 1.89+:
 
 ```sh
 cd core

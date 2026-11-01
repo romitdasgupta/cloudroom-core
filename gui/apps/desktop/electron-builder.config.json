@@ -54,7 +54,8 @@
         "filter": ["**/*", "!**/__pycache__/**", "!**/*.pyc"]
       },
       { "from": ".bundled-runtimes/git", "to": "git" },
-      { "from": "../../LICENSE", "to": "LICENSE.cloudroom.txt" }
+      { "from": "../../../LICENSE", "to": "LICENSE.cloudroom.txt" },
+      { "from": "../../../NOTICE", "to": "NOTICE.cloudroom.txt" }
     ],
     "target": [
       {
@@ -87,7 +88,8 @@
         "to": "app.asar.unpacked/node_modules/bb-app/server/dist/assets/python",
         "filter": ["**/*", "!**/__pycache__/**", "!**/*.pyc", "!{include,tcl}/**", "!Lib/{idlelib,tkinter,turtledemo}/**"]
       },
-      { "from": "../../LICENSE", "to": "LICENSE.cloudroom.txt" }
+      { "from": "../../../LICENSE", "to": "LICENSE.cloudroom.txt" },
+      { "from": "../../../NOTICE", "to": "NOTICE.cloudroom.txt" }
     ],
     "target": [{ "target": "nsis", "arch": ["x64"] }]
   },
