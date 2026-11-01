@@ -226,5 +226,81 @@ class MacJobTests(unittest.TestCase):
         self.assertEqual(preview.visible('\0' * 300, 600, 10), ('\\x00' * 150, 150))
 
 
+class CoresTests(unittest.TestCase):
+    """Registered machines (Settings → Machines) each get previews and Mac access."""
+    A = {'id': 'm_aaaaaaaaaaaa', 'name': 'a', 'url': 'https://a.example.invalid/', 'token': 't' * 40, 'gateToken': 'g'}
+    LAN = {'id': 'm_bbbbbbbbbbbb', 'name': 'b', 'url': 'http://lan.example.invalid', 'token': 't' * 40}
+
+    def connection(self, folder, value):
+        preview.save(folder / 'cloudroom.json', value)
+        return str(folder / 'cloudroom.json')
+
+    def test_cores_lists_registered_machines(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = self.connection(Path(folder), {'machines': [self.A, self.LAN]})
+            found = preview.cores({'connectionFile': path, 'binding': ['sandboxes', None]})
+            self.assertEqual([(c.url, c.machine, c.extra, c.sandbox) for c in found], [('https://a.example.invalid', 'm_aaaaaaaaaaaa', True, False)])
+            self.assertEqual(found[0].headers['Cookie'], '_port_auth=g')
+            self.assertEqual(found[0].headers['Authorization'], 'Bearer ' + 't' * 40)
+
+    def test_cores_keeps_the_primary_and_skips_its_url_as_a_machine(self):
+        with tempfile.TemporaryDirectory() as folder:
+            primary = {'url': 'https://p.example.invalid', 'token': 'p' * 40}
+            path = self.connection(Path(folder), {**primary, 'machines': [{**self.A, 'id': 'm_cccccccccccc', 'url': primary['url']}, self.A]})
+            found = preview.cores({'connectionFile': path, 'binding': [primary['url'], None]})
+            self.assertEqual([(c.url, c.machine, c.extra) for c in found], [(primary['url'], None, False), ('https://a.example.invalid', 'm_aaaaaaaaaaaa', True)])
+            self.assertEqual(found[0].headers['Authorization'], 'Bearer ' + 'p' * 40)
+            self.assertNotIn('Cookie', found[0].headers)
+
+    def test_cores_skips_signed_out_primary(self):
+        with tempfile.TemporaryDirectory() as folder:
+            account = '00000000-0000-4000-8000-000000000000'
+            path = self.connection(Path(folder), {'url': 'https://p.example.invalid', 'account': {'id': account, 'email': 'a@b.c'}, 'machines': [self.A]})
+            found = preview.cores({'connectionFile': path, 'binding': ['https://p.example.invalid', account]})
+            self.assertEqual([c.machine for c in found], ['m_aaaaaaaaaaaa'])
+
+    def test_cores_keeps_a_machine_at_a_signed_out_primary_address(self):
+        # Disconnect keeps the address without its token; the same Core added again as a machine still gets previews.
+        with tempfile.TemporaryDirectory() as folder:
+            path = self.connection(Path(folder), {'url': self.A['url'].rstrip('/'), 'machines': [self.A]})
+            found = preview.cores({'connectionFile': path, 'binding': ['sandboxes', None]})
+            self.assertEqual([c.machine for c in found], ['m_aaaaaaaaaaaa'])
+
+    def test_machines_tunnel_on_their_own_sockets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            path = self.connection(folder, {'machines': [self.A, {**self.A, 'id': 'm_dddddddddddd', 'url': 'https://d.example.invalid'}]})
+            with mock.patch.object(preview.Tunnel, 'ssh'), mock.patch.object(preview.Tunnel, 'listen'):
+                tunnels = [preview.Tunnel(folder, core, 3000, 1, 'device', {}, False, 3000) for core in preview.cores({'connectionFile': path, 'binding': ['sandboxes', None]})]
+            self.assertEqual(len({t.socket_path for t in tunnels}), 2)
+            self.assertEqual(len({t.log_path for t in tunnels}), 2)
+            self.assertNotIn(folder / 'p3000.sock', {t.socket_path for t in tunnels})
+
+    def test_sign_out_leaves_machines_paired(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            primary = {'url': 'https://p.example.invalid', 'token': 'p' * 40}
+            path = self.connection(folder, {**primary, 'machines': [self.A]})
+            preview.save(folder / 'config.json', {'connectionFile': path, 'binding': [primary['url'], None], 'device': 'device'})
+            revoked = []
+            with mock.patch.object(preview, 'launch'), mock.patch.object(preview.Core, 'request', lambda core, *_, **__: revoked.append(core.url)), \
+                    mock.patch.object(sys, 'argv', ['client.py', 'stop', str(folder)]), contextlib.redirect_stdout(None):
+                preview.main()
+            self.assertEqual(revoked, [primary['url']])
+
+    def test_configure_binding_allows_first_sign_in(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            helper, first, second = folder / 'preview', '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002'
+            path = self.connection(folder, {'machines': [self.A]})
+            preview.configure(helper, Path(path), False, None)
+            self.connection(folder, {'account': {'id': first, 'email': 'a@b.c'}, 'machines': [self.A]})
+            preview.configure(helper, Path(path), False, None)
+            self.assertEqual(preview.private_json(helper / 'config.json')['binding'], ['sandboxes', first])
+            self.connection(folder, {'account': {'id': second, 'email': 'a@b.c'}})
+            with self.assertRaises(ValueError):
+                preview.configure(helper, Path(path), False, None)
+
+
 if __name__ == '__main__':
     unittest.main()

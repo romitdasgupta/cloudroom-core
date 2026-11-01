@@ -16,6 +16,7 @@ export function CloudroomAccountPanels() {
       getBbDesktopInfo()?.focusWindow?.();
     }
   }, [signingIn, accountId]);
-  if (!accountId) return null;
+  // Your own Cores need no account, and their threads sign agents in through these panels too (docs/own-cores.md).
+  if (!accountId && !status.data?.selfHosted && !status.data?.machines?.length) return null;
   return <><CodexConnectionPanel /><CursorConnectionPanel /></>;
 }

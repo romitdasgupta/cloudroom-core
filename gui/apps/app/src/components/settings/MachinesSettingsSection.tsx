@@ -23,6 +23,7 @@ import {
 import { AddMachineDialog } from "@/components/dialogs/AddMachineDialog";
 import { MachineAccessControls } from "@/components/settings/MachineAccessSettings";
 import { ConnectVpsDialog, VpsMachineRow, useCloudVps } from "@/components/settings/VpsSettings";
+import { AddCoreDialog, CoreMachineRows } from "@/components/settings/CoreMachines";
 import { MacAccessControl } from "@/components/settings/CloudroomAccountSettings";
 import { OsTile, osFromPlatform, type OsKind } from "@/components/machines/OsTile";
 import { getSettingsSectionRoutePath } from "@/components/settings/settings-sections";
@@ -395,7 +396,9 @@ export function MachinesSettingsSection() {
         <YourMacRow key={mac.handle} mac={mac} />
       ))}
       <VpsMachineRow />
+      <CoreMachineRows />
       <CloudRow />
+      <AddCoreRow />
       <AddPlaceRow />
     </div>
   );
@@ -405,7 +408,7 @@ export function MachinesSettingsSection() {
       <SettingsSection
         plain
         title="Where your agents run"
-        description={`Your ${COMPUTER}s, your VPS, and Cloud. You pick one when you start a thread.`}
+        description={`Your ${COMPUTER}s, your VPS, your own Cores, and Cloud. You pick one when you start a thread.`}
         bodyClassName="flex flex-col gap-3"
       >
         {hosts === undefined ? (
@@ -507,6 +510,23 @@ function CloudRow() {
       </div>
       <Icon name="ChevronRight" className="size-4 shrink-0 text-muted-foreground" aria-hidden />
     </button>
+  );
+}
+
+// A Core the user hosts: no account needed (core docs/setup.md).
+function AddCoreRow() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className={ADD_ROW_CLASS} onClick={() => setOpen(true)}>
+        {PLUS_TILE}
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <span className="block min-w-0 truncate text-sm text-foreground">Connect your own Core</span>
+          <span className="block min-w-0 truncate text-xs text-subtle-foreground/75">Run Cloud threads on a server you host.</span>
+        </div>
+      </button>
+      <AddCoreDialog open={open} onOpenChange={setOpen} />
+    </>
   );
 }
 

@@ -98,6 +98,8 @@ const isSignInUrl = (value: string) => {
 
 interface TokenRun { id: string; url: string | null; error: string | null; done: boolean; stop: () => void }
 let tokenRun: TokenRun | null = null;
+/** The thread whose Core gets the open run's token; undefined is the default Core. Status and cancel see only their own target's run. */
+let tokenTarget: string | undefined;
 
 /**
  * Runs `claude setup-token` on this Mac for a one-year token (ADR 0121), using the Claude desktop app's copy when no CLI is installed.
@@ -228,24 +230,26 @@ function reportSetupToken(error: string | null, output: string, binary: string, 
   });
 }
 
-/** Starts Claude sign-in (or joins the running one) and waits briefly for its sign-in link. */
-export async function startClaudeToken(id: string, save: (token: string) => Promise<unknown>, deps?: AppDeps): Promise<void> {
-  if (!tokenRun || tokenRun.done) tokenRun = runSetupToken(id, save, deps);
+/** Starts Claude sign-in (or joins the running one for the same target) and waits briefly for its sign-in link.
+ *  A sign-in for another target replaces the open one, so a token never lands on a Core the user didn't sign in from. */
+export async function startClaudeToken(id: string, save: (token: string) => Promise<unknown>, deps?: AppDeps, target?: string): Promise<void> {
+  if (tokenRun && tokenTarget !== target) cancelClaudeToken(tokenTarget);
+  if (!tokenRun || tokenRun.done) { tokenRun = runSetupToken(id, save, deps); tokenTarget = target; }
   const run = tokenRun;
   for (let waited = 0; !run.url && !run.done && waited < 15_000; waited += 250) await new Promise(resolve => setTimeout(resolve, 250));
 }
 
-/** Stops the running sign-in; false when none was running. */
-export function cancelClaudeToken(): boolean {
-  const run = tokenRun;
-  tokenRun = null;
+/** Stops the target's running sign-in; false when none was running for it. */
+export function cancelClaudeToken(target?: string): boolean {
+  const run = tokenTarget === target ? tokenRun : null;
+  if (run) tokenRun = null;
   run?.stop();
   return Boolean(run);
 }
 
 /** Shows a running sign-in as `waiting` with its link. A finished run is reported once, then forgotten. */
-export function withClaudeTokenRun<T extends { state: string; message: string | null; login_id: string | null; verification_url: string | null }>(status: T): T {
-  const run = tokenRun;
+export function withClaudeTokenRun<T extends { state: string; message: string | null; login_id: string | null; verification_url: string | null }>(status: T, target?: string): T {
+  const run = tokenTarget === target ? tokenRun : null;
   if (!run) return status;
   if (!run.done) return { ...status, state: "waiting", message: null, login_id: run.id, verification_url: run.url };
   tokenRun = null;

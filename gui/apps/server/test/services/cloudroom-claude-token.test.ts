@@ -1,5 +1,20 @@
+import { EventEmitter } from "node:events";
+import { writeFileSync } from "node:fs";
 import { expect, it, vi } from "vitest";
-import { runDaemonSetupToken } from "../../src/services/cloudroom/claude-token.js";
+import { cancelClaudeToken, runDaemonSetupToken, startClaudeToken, withClaudeTokenRun } from "../../src/services/cloudroom/claude-token.js";
+
+// A fake `claude setup-token`: each run's terminal opens Claude's link at once and has no pid to kill.
+const terminals = vi.hoisted(() => [] as { stdout: import("node:events").EventEmitter }[]);
+vi.mock("@cloudroom/process-utils", async (original) => ({ ...await original<typeof import("@cloudroom/process-utils")>(), findCliExecutable: () => "/fake/claude" }));
+vi.mock("@cloudroom/process-utils/claude-token", async (original) => ({
+  ...await original<typeof import("@cloudroom/process-utils/claude-token")>(),
+  spawnInTerminal: (_command: string, env: NodeJS.ProcessEnv) => {
+    writeFileSync(`${env.BROWSER}.url`, LINK);
+    const child = Object.assign(new EventEmitter(), { pid: undefined, stdout: new EventEmitter() });
+    terminals.push(child);
+    return child;
+  },
+}));
 
 vi.mock("../../src/services/cloudroom/setup-telemetry.js", () => ({
   cliPlace: () => null,
@@ -41,4 +56,22 @@ it("Windows Connect Claude stops when Claude exits without a token", async () =>
   const run = runDaemonSetupToken("req", "claude.exe", async () => {}, async () => ({ ...running, state: "exited" }));
   await vi.waitFor(() => expect(run.done).toBe(true), { timeout: 5_000 });
   expect(run.error).toBe("Claude sign-in did not finish. Try again.");
+});
+
+it("Mac Connect Claude keeps one run per target, so a token lands only on the Core it was started for", async () => {
+  const idle = { state: "missing", message: null, login_id: null, verification_url: null };
+  const [saveA, saveB] = [vi.fn(async () => {}), vi.fn(async () => {})];
+  await startClaudeToken("a", saveA, undefined, "thread-a");
+  expect(withClaudeTokenRun(idle, "thread-a")).toMatchObject({ state: "waiting", login_id: "a", verification_url: LINK });
+  expect(withClaudeTokenRun(idle)).toEqual(idle);
+  expect(cancelClaudeToken("thread-b")).toBe(false);
+  // Another thread's sign-in replaces thread A's run instead of joining it.
+  await startClaudeToken("b", saveB, undefined, "thread-b");
+  expect(terminals).toHaveLength(2);
+  expect(withClaudeTokenRun(idle, "thread-a")).toEqual(idle);
+  expect(withClaudeTokenRun(idle, "thread-b")).toMatchObject({ state: "waiting", login_id: "b" });
+  terminals[1]!.stdout.emit("data", Buffer.from("sk-ant-oat01-" + "t".repeat(40) + "\n"));
+  await vi.waitFor(() => expect(saveB).toHaveBeenCalledWith("sk-ant-oat01-" + "t".repeat(40)));
+  expect(saveA).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(withClaudeTokenRun(idle, "thread-b")).toEqual(idle));
 });

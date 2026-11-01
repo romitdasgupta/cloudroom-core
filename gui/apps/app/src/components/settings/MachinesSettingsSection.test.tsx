@@ -38,6 +38,10 @@ vi.mock("@/lib/sdk", () => ({
       update: vi.fn(),
     },
     system: { config: vi.fn() },
+    cloudroom: {
+      machines: { list: vi.fn(), add: vi.fn(), update: vi.fn(), remove: vi.fn() },
+      vps: vi.fn(),
+    },
   },
 }));
 
@@ -153,6 +157,7 @@ beforeEach(() => {
   hostDaemon.localDaemonHostId = "host_primary";
   hostDaemon.platform = "darwin";
   vi.mocked(sdk.hosts.experimental_listProviders).mockResolvedValue([]);
+  vi.mocked(sdk.cloudroom.machines.list).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -564,6 +569,24 @@ describe("MachinesSettingsSection", () => {
     ).toBeNull();
     expect(vi.mocked(sdk.hosts.delete)).not.toHaveBeenCalled();
   });
+  it("lists your own Cores next to the computers while signed out", async () => {
+    vi.mocked(sdk.system.config).mockResolvedValue(systemConfig());
+    vi.mocked(sdk.hosts.list).mockResolvedValue([primaryHost]);
+    vi.mocked(sdk.cloudroom.machines.list).mockResolvedValue([
+      { id: "m_0123456789ab", name: "Home server", url: "https://home.example.ts.net", default: true, ready: true, error: null, harnesses: null, threads: 0 },
+    ]);
+    stubSidebarBootstrapFetch();
+
+    renderSection();
+
+    const core = (await screen.findByText("Home server")).closest("button");
+    expect(core?.textContent).toContain("Default");
+    expect(core?.textContent).toContain("0 threads");
+    fireEvent.click(screen.getByRole("button", { name: /Connect your own Core/u }));
+    expect(await screen.findByRole("heading", { name: "Connect your own Core" })).toBeDefined();
+    expect(screen.getByLabelText("Core API token")).toBeDefined();
+  });
+
   it("lists your other Macs and sets one up to run threads", async () => {
     vi.mocked(sdk.system.config).mockResolvedValue(systemConfig());
     vi.mocked(sdk.hosts.list).mockResolvedValue([primaryHost]);

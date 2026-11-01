@@ -84,9 +84,13 @@ export interface EnvironmentPickerUIProps {
   cloud?: {
     selected: boolean;
     unavailableReason: string | null;
+    /** No Cloudroom Cloud to offer (signed out with only the user's Cores): the Cloud row is left out and the Cores stand alone. */
+    hidden?: boolean;
     note?: string;
     onSelect: () => void;
     vps?: { selected: boolean; busy: boolean; description: string; onSelect: () => void };
+    /** Self-hosted Cores (Settings → Machines), listed under Cloud. */
+    cores?: { id: string; name: string; selected: boolean; ready: boolean; description: string; onSelect: () => void }[];
   };
   onRequestMachineSetup?: (host: Host) => void;
   providers?: readonly SystemEnvironmentProvider[];
@@ -298,6 +302,10 @@ export function EnvironmentPickerUI({
     }
     if (cloud?.vps?.selected) {
       return { modeLabel: "VPS", compactModeLabel: "VPS", icon: "Server", usePlaceIcon: true };
+    }
+    const core = cloud?.cores?.find((item) => item.selected);
+    if (core) {
+      return { modeLabel: core.name, compactModeLabel: core.name, icon: "Server", usePlaceIcon: true };
     }
     if (
       cloud &&
@@ -523,7 +531,7 @@ export function EnvironmentPickerUI({
                     <MachineGroupedEnvironmentOptions
                       machines={availableMachines}
                       sources={sources}
-                      value={cloud.selected || cloud.vps?.selected ? "" : value}
+                      value={cloud.selected || cloud.vps?.selected || cloud.cores?.some((core) => core.selected) ? "" : value}
                       onRequestMachineSetup={
                         onRequestMachineSetup ? requestMachineSetup : undefined
                       }
@@ -591,6 +599,7 @@ export function EnvironmentPickerUI({
                                 selected={
                                   !cloud.selected &&
                                   !cloud.vps?.selected &&
+                                  !cloud.cores?.some((core) => core.selected) &&
                                   providerValueSelected(value, provider) &&
                                   selectedProviderHostId === hostId
                                 }
@@ -604,18 +613,20 @@ export function EnvironmentPickerUI({
                   )}
                   <CommandSeparator className="mx-0 shrink-0" />
                   <CommandGroup>
-                    <EnvironmentMenuItem
-                      value="cloud:primary-checkout"
-                      label={cloudLabel}
-                      icon="Cloud"
-                      selected={cloud.selected}
-                      description={cloud.unavailableReason ?? cloud.note}
-                      disabled={cloud.unavailableReason !== null}
-                      onSelect={() => {
-                        cloud.onSelect();
-                        handleOpenChange(false);
-                      }}
-                    />
+                    {cloud.hidden ? null : (
+                      <EnvironmentMenuItem
+                        value="cloud:primary-checkout"
+                        label={cloudLabel}
+                        icon="Cloud"
+                        selected={cloud.selected}
+                        description={cloud.unavailableReason ?? cloud.note}
+                        disabled={cloud.unavailableReason !== null}
+                        onSelect={() => {
+                          cloud.onSelect();
+                          handleOpenChange(false);
+                        }}
+                      />
+                    )}
                     {cloud.vps ? (
                       <EnvironmentMenuItem
                         value="cloud:vps"
@@ -629,6 +640,20 @@ export function EnvironmentPickerUI({
                         }}
                       />
                     ) : null}
+                    {cloud.cores?.map((core) => (
+                      <EnvironmentMenuItem
+                        key={core.id}
+                        value={`cloud:core:${core.id}`}
+                        label={core.name}
+                        icon="Server"
+                        selected={core.selected}
+                        description={core.description}
+                        onSelect={() => {
+                          core.onSelect();
+                          handleOpenChange(false);
+                        }}
+                      />
+                    ))}
                   </CommandGroup>
                 </>
               ) : isMachineMenu && availableMachines ? (

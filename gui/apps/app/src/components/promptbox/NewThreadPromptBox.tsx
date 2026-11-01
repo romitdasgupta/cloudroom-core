@@ -159,7 +159,7 @@ interface NewThreadPromptBoxUIProps {
   execution: ExecutionControlsProps;
 }
 
-function promptLocationCommands(
+export function promptLocationCommands(
   environment: NewThreadEnvironmentConfig,
   projectless: boolean,
 ): PromptLocationCommand[] | undefined {
@@ -207,7 +207,8 @@ function promptLocationCommands(
   if (cloud.unavailableReason === null) {
     commands.push({
       name: "cloud",
-      description: `Switch to ${CLOUDROOM_CLOUD_PRIMARY}`,
+      // With the Cloud row hidden, /cloud lands on one of the user's Cores.
+      description: cloud.hidden ? "Switch to your Core" : `Switch to ${CLOUDROOM_CLOUD_PRIMARY}`,
       onSelect: cloud.onSelect,
     });
   }
@@ -494,14 +495,20 @@ export function EnvironmentSlot({
     () => parseEnvironmentValue(environment.value),
     [environment.value],
   );
+  // Cloud, the VPS, or one of the user's Cores: every one is a Cloud thread, so it gets the Cloud inputs, not local ones.
+  const cloudChosen = Boolean(
+    environment.cloud?.selected ||
+      environment.cloud?.vps?.selected ||
+      environment.cloud?.cores?.some((core) => core.selected),
+  );
   const selectedProvider =
-    !environment.cloud?.selected && parsedEnvironment?.type === "provider"
+    !cloudChosen && parsedEnvironment?.type === "provider"
       ? providers.find(
           (provider) => provider.id === parsedEnvironment.environmentProviderId,
         )
       : undefined;
   const showReuseEnvironmentPicker =
-    !environment.cloud?.selected && parsedEnvironment?.type === "reuse";
+    !cloudChosen && parsedEnvironment?.type === "reuse";
   const [environmentPickerOpen, setEnvironmentPickerOpen] = useState(false);
   const showEnvironmentPicker =
     !projectless ||
@@ -530,7 +537,7 @@ export function EnvironmentSlot({
           ? { onRequestMachineSetup: environment.onRequestMachineSetup }
           : {})}
         disabled={environment.disabled}
-        isLoading={!environment.cloud?.selected && environment.isLoading}
+        isLoading={!cloudChosen && environment.isLoading}
         providers={providers}
         providersByHostId={environment.providersByHostId}
         selectedProviderHostId={environment.selectedProviderHostId}
@@ -561,7 +568,7 @@ export function EnvironmentSlot({
       {selectedProvider !== undefined && selectedProvider.inputs !== null
         ? environmentProviderInputsSlot
         : null}
-      {environment.cloud?.selected ? cloudInputsSlot : null}
+      {cloudChosen ? cloudInputsSlot : null}
     </>
   );
 }

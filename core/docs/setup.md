@@ -176,7 +176,9 @@ Never use `tailscale funnel` for Core: it opens the API to the whole internet.
 
 ## Connect the desktop app
 
-In the [Cloudroom app](https://www.cloudroom.dev/download) (v83 or newer), open **Settings → Cloudroom account → Connect your own Core**. Enter the HTTPS URL and the token from `sudo grep ^CLOUDROOM_TOKEN= /etc/cloudroom/core.env`. No Cloudroom account is needed. Cloud threads then run on this machine and share its files.
+In the [Cloudroom app](https://www.cloudroom.dev/download) (v83 or newer), open **Settings → Machines → Connect your own Core** (or **Settings → Cloudroom account → Connect your own Core** for one). Enter the HTTPS URL and the token from `sudo grep ^CLOUDROOM_TOKEN= /etc/cloudroom/core.env`. No Cloudroom account is needed. Cloud threads then run on this machine and share its files.
+
+**Several machines.** Connect each one the same way: a local VM or container, a VPS, or a cloud VM. Each runs one Core that its threads share. Pick the machine in the composer's Cloud menu, or switch on **Use for new Cloud threads** for a default. A thread stays on its machine, and so do its children and side chats. Keep a machine's URL to keep its threads. It works with or without a Cloudroom account. Previews and Mac access reach every machine; skills and settings sync only to the Core on the account page, and Codex and Pi logins are copied to the others when copy logins is on. Without an account, both switches are under Settings → Machines. Removing a machine tells its Core to forget this computer.
 
 ## Upgrade
 

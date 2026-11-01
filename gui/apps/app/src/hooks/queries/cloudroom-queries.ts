@@ -12,8 +12,29 @@ import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
 import { appToast } from "@/components/ui/app-toast";
 import { getMutationErrorMessage, showMutationErrorToast } from "@/lib/mutation-errors";
 
+/** What a Core offers, as its capabilities list it. */
+const cloudHarnessesSchema = z.array(z.object({
+  id: z.string(),
+  provider: z.string().nullable().optional(),
+  reasoning_levels: z.array(z.string()),
+  models: z.array(z.object({ model: z.string(), reasoning_levels: z.array(z.string()) })).nullable().optional(),
+  service_tier: z.boolean().default(false),
+  steer: z.boolean().optional(),
+  compact: z.boolean().optional(),
+  rewind: z.boolean().optional(),
+  prompt_reasoning: z.boolean().optional(),
+})).nullable();
+const cloudMachineSchema = z.object({
+  id: z.string(), name: z.string(), url: z.string(), default: z.boolean(), ready: z.boolean(), error: z.string().nullable(), harnesses: cloudHarnessesSchema, threads: z.number(),
+  steer: z.boolean().default(false), rewind: z.boolean().default(false), compact: z.boolean().default(false),
+  queue_edit: z.boolean().default(false), queue_cancel: z.boolean().default(false), queue_reorder: z.boolean().default(false),
+});
+
 export const cloudroomStatusSchema = z.object({
   ready: z.boolean(),
+  account: z.object({ id: z.string(), email: z.string() }).nullable().default(null),
+  /** Connected on the Account page to a Core the user hosts, without an account. */
+  selfHosted: z.boolean().default(false),
   storage: z.object({
     enabled: z.boolean(), level: z.enum(["normal", "low_space", "blocked"]),
     reason: z.enum(["disk_capacity", "measurement_unavailable", "unprotected_test_mode"]),
@@ -37,18 +58,37 @@ export const cloudroomStatusSchema = z.object({
   cloudQueue: z.object({ position: z.number(), total: z.number(), regionBlocked: z.boolean() }).nullable().default(null),
   usedCloud: z.boolean().default(true),
   lastCloudAt: z.number().nullable().optional(),
-  harnesses: z.array(z.object({
-    id: z.string(),
-    provider: z.string().nullable().optional(),
-    reasoning_levels: z.array(z.string()),
-    models: z.array(z.object({ model: z.string(), reasoning_levels: z.array(z.string()) })).nullable().optional(),
-    service_tier: z.boolean().default(false),
-    steer: z.boolean().optional(),
-    compact: z.boolean().optional(),
-    rewind: z.boolean().optional(),
-    prompt_reasoning: z.boolean().optional(),
-  })).nullable().default([]),
+  harnesses: cloudHarnessesSchema.default([]),
+  /** Self-hosted Cores (Settings → Machines). `primary` is the one connected on the Account page. */
+  machines: z.array(cloudMachineSchema).default([]),
 });
+export type CloudroomConnectionStatus = z.infer<typeof cloudroomStatusSchema>;
+
+/** The status as a thread on this Core sees it: its own readiness, catalog and feature flags, and no cloud queue. Any other id: `status` as is. */
+export function cloudStatusFor<T extends CloudroomConnectionStatus | undefined>(status: T, machineId: string | null | undefined): T {
+  const machine = machineId ? status?.machines.find((item) => item.id === machineId) : undefined;
+  if (!status || !machine) return status;
+  const { steer, rewind, compact, queue_edit, queue_cancel, queue_reorder } = machine;
+  return { ...status, ready: machine.ready, error: machine.error, harnesses: machine.harnesses, cloudQueue: null, steer, rewind, compact, queue_edit, queue_cancel, queue_reorder };
+}
+
+/** The Cores listed under Cloud, and whether the generic Cloud entry shows. That entry means Cloudroom Cloud or the Account-page Core (`primary`), so that Core isn't listed again; a Cores-only user has neither, so it is hidden. */
+export function cloudEntries(status: CloudroomConnectionStatus | undefined, sandboxOnly: boolean) {
+  const cores = sandboxOnly ? [] : (status?.machines ?? []).filter((machine) => machine.id !== "primary");
+  const hostedCloud = Boolean(status?.account || status?.selfHosted);
+  return { cores, hostedCloud, hidden: !hostedCloud && cores.length > 0 };
+}
+
+/** The Core a new Cloud thread goes to: the user's pick, else the default Core, else none (Cloudroom Cloud). A "cloud" pick only holds when there is a Cloud to go to; without one, some Core always does. */
+export function pickedCloudMachine(picked: string | null, machines: readonly { id: string; default: boolean }[], hostedCloud: boolean): string | null {
+  if (picked === "cloud" && hostedCloud) return null;
+  return machines.find((machine) => machine.id === picked)?.id ?? machines.find((machine) => machine.default)?.id ?? (hostedCloud ? null : machines[0]?.id ?? null);
+}
+
+/** Self-hosted Cores, each probed by the server; every mutation answers the new list. */
+export function useCoreMachines() {
+  return useQuery({ queryKey: ["cloudroom-machines"], queryFn: ({ signal }) => sdk.cloudroom.machines.list(signal), refetchInterval: 10_000 });
+}
 
 const CORE_HARNESS_IDS: Record<string, string> = { "acp-cursor": "cursor", "acp-fx": "fx", "acp-opencode": "opencode", "acp-hermes-agent": "hermes", "acp-devin": "devin", "acp-openclaw": "openclaw" };
 
@@ -91,7 +131,7 @@ export function cloudFeatureSupported(status: z.infer<typeof cloudroomStatusSche
 }
 const cloudDiskSchema = z.object({ paused: z.boolean(), reason: z.enum(["disk_capacity", "measurement_unavailable"]), usedBytes: z.number().nullable(), totalBytes: z.number().nullable() });
 export type CloudDisk = z.infer<typeof cloudDiskSchema>;
-const threadStatusSchema = z.object({ authRequired: z.boolean().default(false), starting: z.boolean().default(false), sessionId: z.string().nullable(), paused: z.boolean(), failedStart: z.boolean().default(false), model: z.string(), reasoning: reasoningLevelSchema, serviceTier: serviceTierSchema.default("default"), error: z.string().nullable(), reconnecting: z.boolean().default(false), usageLimit: z.boolean().default(false), disk: cloudDiskSchema.nullable().default(null), awake: z.boolean().default(false), vps: z.boolean().default(false), move: z.enum(["moving", "failed"]).nullable().default(null), outOfMemory: z.boolean().default(false), pendingDelivery: z.number() }).nullable();
+const threadStatusSchema = z.object({ authRequired: z.boolean().default(false), starting: z.boolean().default(false), sessionId: z.string().nullable(), paused: z.boolean(), failedStart: z.boolean().default(false), model: z.string(), reasoning: reasoningLevelSchema, serviceTier: serviceTierSchema.default("default"), error: z.string().nullable(), reconnecting: z.boolean().default(false), usageLimit: z.boolean().default(false), disk: cloudDiskSchema.nullable().default(null), awake: z.boolean().default(false), vps: z.boolean().default(false), move: z.enum(["moving", "failed"]).nullable().default(null), outOfMemory: z.boolean().default(false), pendingDelivery: z.number(), machine: z.object({ id: z.string(), name: z.string() }).nullable().default(null) }).nullable();
 
 export function useCloudroomAccount() {
   return useQuery({ queryKey: ["cloudroom-account"], queryFn: async ({ signal }) => {

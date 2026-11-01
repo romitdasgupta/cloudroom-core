@@ -15,7 +15,7 @@ import { invalidateEnvironmentWorkspaceStateQueries } from "@/hooks/cache-owners
 import { moveThreadDetailBootstrap } from "@/hooks/cache-owners/thread-detail-cache-owner";
 import { useMediaQuery } from "@cloudroom/shared-ui/hooks/use-media-query";
 import { useSystemProviderInfo } from "@/hooks/queries/system-queries";
-import { useCloudroomConnection, cloudFeatureSupported, useOpenCloudFile, useCloudroomThread, useCloudroomThreadWorkspace } from "@/hooks/queries/cloudroom-queries";
+import { useCloudroomConnection, cloudFeatureSupported, cloudStatusFor, useOpenCloudFile, useCloudroomThread, useCloudroomThreadWorkspace } from "@/hooks/queries/cloudroom-queries";
 import { useNavigate } from "react-router-dom";
 import { useAtom, useSetAtom } from "jotai";
 import { findPane, replacePaneContent } from "@/lib/split-layout";
@@ -993,6 +993,8 @@ function ThreadDetailViewInternal(props: ThreadRoutePathArgs) {
     [forkThreadFromMessage],
   );
   const cloudConnection = useCloudroomConnection();
+  // A thread on one of the user's Cores checks that Core's catalog (same query as the prompt area, so no extra poll).
+  const cloudMachineId = useCloudroomThread(threadId, thread?.executionTarget === "cloud").data?.machine?.id;
   const threadProviderInfo = useSystemProviderInfo(
     thread?.environmentId
       ? {
@@ -1075,7 +1077,7 @@ function ThreadDetailViewInternal(props: ThreadRoutePathArgs) {
   const canEditSentMessages =
     thread !== undefined &&
     (thread.executionTarget === "cloud"
-      ? cloudFeatureSupported(cloudConnection.data, thread.providerId, "rewind")
+      ? cloudFeatureSupported(cloudStatusFor(cloudConnection.data, cloudMachineId), thread.providerId, "rewind")
       : (threadProviderInfo?.capabilities.supportsSessionRewind ?? false)) &&
     thread.archivedAt === null &&
     thread.deletedAt === null &&

@@ -10,6 +10,7 @@ import { ClaudeConnectionButton, useClaudeConnection } from "@/components/Claude
 import { openCodexConnection } from "@/components/CodexConnectionPanel";
 import { selectCloudForNewThreads } from "@/components/promptbox/NewThreadComposer";
 import { ImportChats } from "@/components/settings/ImportChats";
+import { AddCoreDialog } from "@/components/settings/CoreMachines";
 import { BbLogo } from "@/components/ui/bb-logo";
 import { appToast } from "@/components/ui/app-toast";
 import { useCreateProject } from "@/hooks/mutations/project-mutations";
@@ -87,7 +88,7 @@ export function Onboarding() {
   const [open, setOpen] = useAtom(openAtom);
   const projects = useSidebarNavigation().data?.projects;
   const account = useCloudroomAccount();
-  const locked = account.isSuccess && !account.data.account && !account.data.selfHosted;
+  const locked = account.isSuccess && !account.data.account && !account.data.selfHosted && !account.data.machines?.length;
   // Only the desktop app opens setup by itself: "skipped" is saved per browser, so phones and other browsers would see it again.
   const firstRun = !dismissed && getBbDesktopInfo() !== null && projects !== undefined && projects.length === 0;
   // Stay open once shown: adding a folder or importing chats creates projects, which would otherwise end the first run mid-step.
@@ -222,7 +223,7 @@ function Setup({ locked, close }: { locked: boolean; close: () => void }) {
           <div key={step} className={cn("my-auto w-full duration-300 animate-in fade-in-0 slide-in-from-bottom-1", step === 3 ? "max-w-[860px]" : "max-w-[600px]")}>
             {step === 1 && stamped ? <TickStamp key={`${claude}-${codex}`} /> : <BbLogo className="mb-6 size-[72px] -rotate-[5deg]" />}
             <p className="font-serif text-base text-(--ob-muted) italic">Step {step + 1} of 4</p>
-            {step === 0 && <AccountStep email={account.data?.account?.email ?? null} signingIn={account.data?.signingIn === true} next={next} />}
+            {step === 0 && <AccountStep email={account.data?.account?.email ?? null} signingIn={account.data?.signingIn === true} next={next} done={leave} />}
             {step === 1 && <AgentStep progress={progress} next={next} stamped={stamped} left={countdown?.left ?? null} choices={choices} setChoices={setChoices} />}
             {step === 2 && <GithubStep progress={progress} next={next} />}
             {step === 3 && <ProjectStep close={leave} added={added} setAdded={setAdded} imported={imported} setImported={setImported} />}
@@ -352,8 +353,10 @@ const TickStamp = () => (
   </span>
 );
 
-function AccountStep({ email, signingIn, next }: { email: string | null; signingIn: boolean; next: () => void }) {
+function AccountStep({ email, signingIn, next, done }: { email: string | null; signingIn: boolean; next: () => void; done: () => void }) {
   const signIn = useCloudroomSignIn();
+  // A self-hosted Core needs no account (core/docs/setup.md), so setup must not lock its users out.
+  const [core, setCore] = useState(false);
   const busy = signingIn || signIn.isPending;
   const start = () => { track("account", "started"); signIn.mutate("signIn"); };
   return (
@@ -375,7 +378,9 @@ function AccountStep({ email, signingIn, next }: { email: string | null; signing
           <div className="mt-8 flex flex-col items-start gap-4">
             <Cta onClick={start}>Sign in with browser <Icon name="ArrowRight" aria-hidden /></Cta>
             <Note>Already signed in there? You come right back.</Note>
+            <Note>Hosting your own Core? <button type="button" className={LINK} onClick={() => setCore(true)}>Connect it instead</button>, no account needed.</Note>
           </div>
+          <AddCoreDialog open={core} onOpenChange={setCore} onAdded={done} />
         </>
       )}
     </>

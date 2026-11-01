@@ -49,11 +49,13 @@ function ConnectionPanel({ provider }: { provider: "codex" | "cursor" }) {
   const [signedIn, setSignedIn] = useState(false);
   const requestId = useRef<string | null>(null);
   const accountId = account.data?.account?.id;
-  const queryKey = [`cloudroom-${provider}-auth`, accountId];
+  // Your own Cores need no account; a thread's sign-in goes to its own Core (docs/own-cores.md).
+  const usable = Boolean(accountId || account.data?.selfHosted || account.data?.machines?.length);
+  const queryKey = [`cloudroom-${provider}-auth`, accountId, threadId];
   const auth = useQuery({
     queryKey,
     enabled: Boolean(account.data?.ready && open),
-    queryFn: ({ signal }) => cursor ? sdk.cloudroom.cursorAuth(signal) : sdk.cloudroom.codexAuth(signal),
+    queryFn: ({ signal }) => cursor ? sdk.cloudroom.cursorAuth(signal, threadId ?? undefined) : sdk.cloudroom.codexAuth(signal, threadId ?? undefined),
     retry: false,
     // Fast only while a sign-in runs. Idle (missing) checks once a minute: each check costs database calls.
     refetchInterval: query => !open ? false : query.state.data?.state === "waiting" ? 1500 : query.state.data?.state === "missing" ? 60_000 : false,
@@ -81,9 +83,10 @@ function ConnectionPanel({ provider }: { provider: "codex" | "cursor" }) {
       requestId.current ??= crypto.randomUUID();
       const key = apiKey;
       setApiKey("");
+      const thread = threadId ?? undefined;
       const result = cursor
-        ? kind === "key" ? await sdk.cloudroom.cursorApiKey(requestId.current, key) : kind === "login" ? await sdk.cloudroom.cursorLogin(requestId.current) : await sdk.cloudroom.cancelCursorLogin(auth.data!.login_id!)
-        : kind === "login" ? await sdk.cloudroom.codexLogin(requestId.current) : await sdk.cloudroom.cancelCodexLogin(auth.data!.login_id!);
+        ? kind === "key" ? await sdk.cloudroom.cursorApiKey(requestId.current, key, thread) : kind === "login" ? await sdk.cloudroom.cursorLogin(requestId.current, thread) : await sdk.cloudroom.cancelCursorLogin(auth.data!.login_id!, thread)
+        : kind === "login" ? await sdk.cloudroom.codexLogin(requestId.current, thread) : await sdk.cloudroom.cancelCodexLogin(auth.data!.login_id!, thread);
       if (result.state === "error") throw new Error(result.message ?? `${name} sign-in failed`);
       setSignedIn(kind !== "cancel");
       queryClient.setQueryData(queryKey, result);
@@ -96,7 +99,7 @@ function ConnectionPanel({ provider }: { provider: "codex" | "cursor" }) {
   const state = auth.data?.state;
   const rejected = !cursor && Boolean(threadId) && !signedIn && state === "connected";
   const close = () => { setApiKey(""); setOpen(false); };
-  if (!accountId || !account.data?.ready) return null;
+  if (!usable || !account.data?.ready) return null;
   return <PersistentResponsiveDrawerShell
     open={open} onOpenChange={value => { if (!value) close(); }} labelledBy={titleId} describedBy={descriptionId}
     backdropClassName="bg-black/25 backdrop-blur-xs"

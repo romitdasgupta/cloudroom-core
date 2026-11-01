@@ -5,9 +5,10 @@ import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
 
 export const CLOUD_LOCKED_REASON = "Sign in to use Cloud.";
 
-export function useCloudLocked(): boolean {
+/** Signed out with no Cloud to use. Own Cores unlock Cloud, except for `sandboxOnly` work (forks), which only Cloudroom Cloud runs. */
+export function useCloudLocked(sandboxOnly = false): boolean {
   const status = useCloudroomAccount();
-  return status.isSuccess && !status.data.account && !status.data.selfHosted;
+  return status.isSuccess && !status.data.account && !status.data.selfHosted && (sandboxOnly || !status.data.machines?.length);
 }
 
 export function showCloudSignIn(): void {

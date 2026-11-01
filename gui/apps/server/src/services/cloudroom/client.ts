@@ -276,6 +276,8 @@ export class CloudroomClient {
   #token: string;
   #gateToken?: string;
   #timeoutMs: number;
+  /** The Core's address, without a trailing slash. */
+  get baseUrl(): string { return this.#base; }
 
   constructor(options: { url: string; token: string; gateToken?: string; timeoutMs?: number }) {
     let url: URL;

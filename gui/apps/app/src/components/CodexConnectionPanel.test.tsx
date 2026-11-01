@@ -8,7 +8,8 @@ import { openUrlInExternalBrowser } from "@/lib/url-open-routing";
 import { CodexConnectionPanel, CursorConnectionPanel, openCodexConnection, openCursorConnection } from "./CodexConnectionPanel";
 
 vi.mock("@/lib/sdk", () => ({ sdk: { cloudroom: { codexAuth: vi.fn(), codexLogin: vi.fn(), cancelCodexLogin: vi.fn(), cursorAuth: vi.fn(), cursorLogin: vi.fn(), cancelCursorLogin: vi.fn(), cursorApiKey: vi.fn(), retryStart: vi.fn() } } }));
-vi.mock("@/hooks/queries/cloudroom-queries", () => ({ useCloudroomAccount: () => ({ data: { ready: true, account: { id: "member" } } }) }));
+const accountStatus = vi.hoisted(() => ({ current: { ready: true, account: { id: "member" } } as { ready: boolean; account: { id: string } | null; machines?: { id: string }[] } }));
+vi.mock("@/hooks/queries/cloudroom-queries", () => ({ useCloudroomAccount: () => ({ data: accountStatus.current }) }));
 vi.mock("@/lib/url-open-routing", () => ({ openUrlInExternalBrowser: vi.fn() }));
 vi.mock("@cloudroom/shared-ui/responsive-overlay", () => ({ PersistentResponsiveDrawerShell: ({ open, children }: { open: boolean; children: ReactNode }) => open ? <div role="dialog">{children}</div> : null }));
 type Status = Awaited<ReturnType<typeof sdk.cloudroom.codexAuth>>;
@@ -16,7 +17,7 @@ const missing: Status = { state: "missing", email: null, plan: null, message: nu
 const waiting: Status = { ...missing, state: "waiting", login_id: "attempt", verification_url: "https://auth.openai.com/codex/device", user_code: "TEST-1234" };
 const connected: Status = { ...missing, state: "connected", email: "member@example.invalid", plan: "plus" };
 const clients: QueryClient[] = [];
-afterEach(() => { cleanup(); clients.forEach(client => client.clear()); clients.length = 0; vi.resetAllMocks(); });
+afterEach(() => { cleanup(); clients.forEach(client => client.clear()); clients.length = 0; vi.resetAllMocks(); accountStatus.current = { ready: true, account: { id: "member" } }; });
 function mount(cursor = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   clients.push(client);
@@ -49,7 +50,7 @@ it("clears a Cursor API key from the form immediately after submission", async (
   const input = await screen.findByLabelText("Cursor user API key");
   fireEvent.change(input, { target: { value: "private-test-canary" } });
   fireEvent.click(screen.getByRole("button", { name: "Connect with key", hidden: true }));
-  await waitFor(() => expect(sdk.cloudroom.cursorApiKey).toHaveBeenCalledWith(expect.any(String), "private-test-canary"));
+  await waitFor(() => expect(sdk.cloudroom.cursorApiKey).toHaveBeenCalledWith(expect.any(String), "private-test-canary", undefined));
   expect((input as HTMLInputElement).value).toBe("");
   expect(sdk.cloudroom.retryStart).not.toHaveBeenCalled();
 });
@@ -79,7 +80,7 @@ it("cancels only the pending login and never sends the task", async () => {
   openCodexConnection();
   fireEvent.click(await screen.findByRole("button", { name: "Cancel sign-in" }));
   await screen.findByRole("button", { name: "Sign in with ChatGPT" });
-  expect(sdk.cloudroom.cancelCodexLogin).toHaveBeenCalledExactlyOnceWith("attempt");
+  expect(sdk.cloudroom.cancelCodexLogin).toHaveBeenCalledExactlyOnceWith("attempt", undefined);
   expect(sdk.cloudroom.retryStart).not.toHaveBeenCalled();
   expect(openUrlInExternalBrowser).not.toHaveBeenCalled();
 });
@@ -99,4 +100,14 @@ it("offers retry for expired login, another account for quota, and no login for 
   await screen.findByText(current.message!);
   expect(screen.getByRole("button", { name: "Sign in with another account" })).toBeDefined();
   expect(screen.getByRole("button", { name: "Check again" })).toBeDefined();
+});
+it("opens without an account for own Cores, and signs in on the thread's Core", async () => {
+  accountStatus.current = { ready: true, account: null, machines: [{ id: "m_000000000001" }] };
+  vi.mocked(sdk.cloudroom.codexAuth).mockResolvedValue(missing);
+  vi.mocked(sdk.cloudroom.codexLogin).mockResolvedValue(waiting);
+  mount();
+  openCodexConnection("thread-on-core");
+  fireEvent.click(await screen.findByRole("button", { name: "Sign in with ChatGPT" }));
+  await waitFor(() => expect(sdk.cloudroom.codexLogin).toHaveBeenCalledWith(expect.any(String), "thread-on-core"));
+  expect(sdk.cloudroom.codexAuth).toHaveBeenCalledWith(expect.anything(), "thread-on-core");
 });

@@ -15,6 +15,8 @@ export interface ClaudeConnectionTarget {
   target: "local" | "cloud";
   hostId?: string | null;
   environmentId?: string | null;
+  /** Cloud only: sign in on this thread's own Core instead of the default one (docs/own-cores.md). */
+  threadId?: string | null;
 }
 const signInUrl = z
   .string()
@@ -65,7 +67,7 @@ async function request(
   signal?: AbortSignal,
 ): Promise<Status> {
   if (target.target === "cloud")
-    return schema.parse(await sdk.cloudroom.claudeAuth(input, signal));
+    return schema.parse(await sdk.cloudroom.claudeAuth({ ...input, ...(target.threadId ? { threadId: target.threadId } : {}) }, signal));
   return sdk.plugins.callRpc({
     pluginId: "provider-claude-code",
     method: "claudeAccount",
@@ -90,10 +92,12 @@ export function useClaudeConnection(
       target.target,
       target.environmentId ?? target.hostId ?? "primary",
       target.target === "cloud" ? account.data?.account?.id : null,
+      ...(target.target === "cloud" && target.threadId ? [target.threadId] : []),
     ],
     queryFn: ({ signal }) => request(target, undefined, signal),
+    // A thread's check goes to its own Core, so the default Core being down (`ready`) must not hide it.
     enabled:
-      enabled && (target.target === "local" || account.data?.ready === true),
+      enabled && (target.target === "local" || Boolean(target.threadId) || account.data?.ready === true),
     retry: false,
     staleTime: 30_000,
     refetchInterval: (query) =>
@@ -105,6 +109,7 @@ export function ClaudeConnectionButton({
   target,
   hostId,
   environmentId,
+  threadId,
   presentation = "footer",
   className,
   text,
@@ -117,7 +122,7 @@ export function ClaudeConnectionButton({
 }) {
   const [open, setOpen] = useState(false);
   const client = useQueryClient();
-  const auth = useClaudeConnection({ target, hostId, environmentId });
+  const auth = useClaudeConnection({ target, hostId, environmentId, threadId });
   const connected = auth.data?.state === "connected";
   useEffect(() => {
     if (!connected) return;
@@ -159,7 +164,7 @@ export function ClaudeConnectionButton({
         className="w-72 p-3"
       >
         <ClaudeConnectionPanel
-          target={{ target, hostId, environmentId }}
+          target={{ target, hostId, environmentId, threadId }}
           onClose={() => setOpen(false)}
         />
       </PopoverContent>
@@ -449,7 +454,7 @@ function ClaudeConnectionPanel({
           >
             {action.isPending ? "Opening sign-in…" : "Sign in with Claude"}
           </Button>
-          {target.target === "cloud" && <ClaudeApiKeyForm />}
+          {target.target === "cloud" && <ClaudeApiKeyForm threadId={target.threadId} />}
         </>
       )}
     </div>

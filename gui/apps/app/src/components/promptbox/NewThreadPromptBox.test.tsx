@@ -9,7 +9,7 @@ import type {
   SystemEnvironmentProvider,
   SystemMachineProvider,
 } from "@cloudroom/server-contract";
-import { EnvironmentSlot, ProjectlessMachineSlot } from "./NewThreadPromptBox";
+import { EnvironmentSlot, ProjectlessMachineSlot, promptLocationCommands } from "./NewThreadPromptBox";
 
 const host = makeHost({
   id: "host_test",
@@ -355,6 +355,52 @@ describe("EnvironmentSlot", () => {
       }
     },
   );
+
+  it("gives a thread on one of the user's Cores the Cloud inputs, not local ones", () => {
+    render(
+      <EnvironmentSlot
+        projectless={false}
+        environment={{
+          ...makeEnvironment({
+            value: "provider:git-worktree",
+            providers: [{ ...sandboxProvider, id: "git-worktree", displayName: "Worktree", inputs: { type: "object" } }],
+          }),
+          cloud: {
+            selected: false, unavailableReason: null, onSelect: vi.fn(),
+            cores: [{ id: "m_0123456789ab", name: "Home", selected: true, ready: true, description: "Your Core", onSelect: vi.fn() }],
+          },
+        }}
+        worktree={makeWorktree()}
+        environmentProviderInputsSlot={<div>Local branch controls</div>}
+        cloudInputsSlot={<div>Cloud branch picker</div>}
+      />,
+    );
+    expect(screen.queryByText("Local branch controls")).toBeNull();
+    expect(screen.getByText("Cloud branch picker")).not.toBeNull();
+  });
+
+  it.each([false, true])("lists only the user's Cores when there is no Cloudroom Cloud (hidden: %s)", (hidden) => {
+    const onSelectCloud = vi.fn();
+    const environment = {
+      ...makeEnvironment({ value: "provider:project-checkout", providers: [{ ...sandboxProvider, id: "project-checkout", displayName: "Local" }] }),
+      cloud: {
+        selected: false, unavailableReason: null, ...(hidden ? { hidden } : {}), onSelect: onSelectCloud,
+        cores: [{ id: "m_0123456789ab", name: "Home", selected: true, ready: true, description: "Your Core", onSelect: vi.fn() }],
+      },
+    };
+    render(<EnvironmentSlot projectless={false} environment={environment} worktree={makeWorktree()} />);
+    const trigger = screen.getByRole("button", { name: "Environment" });
+    expect(trigger.textContent).toContain("Home");
+    fireEvent.click(trigger);
+    const options = screen.getAllByRole("option").map((item) => item.textContent);
+    expect(options.includes("Cloud")).toBe(!hidden);
+    expect(options.at(-1)).toBe("HomeYour Core");
+    // /cloud still works, and lands on a Core when the Cloud row is hidden.
+    const cloud = promptLocationCommands(environment, false)?.find((command) => command.name === "cloud");
+    expect(cloud?.description).toBe(hidden ? "Switch to your Core" : "Switch to Cloud");
+    cloud?.onSelect();
+    expect(onSelectCloud).toHaveBeenCalledOnce();
+  });
 
   it("shows environment loading before resolving to the machine slot", () => {
     const { rerender } = render(

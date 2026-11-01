@@ -8,7 +8,7 @@ import { z } from "zod";
 import { threadGoalSetRequestSchema, updateThreadRequestSchema } from "@cloudroom/server-contract";
 import { cloudGitThreadId } from "@cloudroom/domain";
 import { cloudGitResponse } from "./git.js";
-import { cloudroom, isCloudThread } from "./commands.js";
+import { cloudroom, isCloudThread, machineIdSchema } from "./commands.js";
 import { cloudroomAccount } from "./account.js";
 import { checkPreviewsNow, macAccess, macAccessLevels, setMacAccess } from "./previews.js";
 import { cloudSkills, copyLogins, markLogin, setCloudSkills, setCopyLogins, skillInCloud } from "./sync.js";
@@ -56,7 +56,7 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
     catch (error) { deps.logger.warn({ error, threadId }, "Cloud self-archive failed"); }
   };
   cloudroom(deps).childTurnEnded = (child, turnStatus) => void queueChildThreadTurnNotificationBestEffort(deps, { childThread: child, parentThreadId: child.parentThreadId, turnStatus });
-  startClaudeVersionSync(deps, () => cloudroom(deps).teleportClient());
+  startClaudeVersionSync(deps, () => cloudroom(deps).versionClients());
   startAutoDeleteSync(deps);
   const localOnly: MiddlewareHandler = async (context, next) => {
     const problem = browserRequestProblem(context, deps, { requireJsonForMutation: true });
@@ -76,15 +76,15 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
   app.post("/api/v1/cloudroom/threads/:id/teleport", async context => {
     const problem = browserRequestProblem(context, deps, { requireJsonForMutation: true });
     if (problem) return context.json({ message: "Use the local Cloudroom app or CLI." }, problem.status);
-    const body = z.object({ action: z.enum(["start", "cancel", "local", "copy", "move", "check"]).default("start"), model: z.string().min(1).optional(), reasoning: z.string().min(1).optional() }).strict().parse(await context.req.json());
+    const body = z.object({ action: z.enum(["start", "cancel", "local", "copy", "move", "check"]).default("start"), model: z.string().min(1).optional(), reasoning: z.string().min(1).optional(), machine: machineIdSchema.optional() }).strict().parse(await context.req.json());
     const id = context.req.param("id");
     if (body.action === "cancel") { await teleports(deps).cancel(id); return context.json(teleportProgress(deps.db, id), 202); }
     if (body.action === "local") return context.json(await teleportToLocal(deps, id));
     if (body.action === "copy") return context.json(await copyToMac(deps, id));
     const choice = body.model && body.reasoning ? { model: body.model, reasoning: body.reasoning } : undefined;
     if (body.action === "move") return context.json(await moveToSandbox(deps, id, choice), 202);
-    if (body.action === "check") return context.json(await teleports(deps).check(id, choice));
-    return context.json(await teleports(deps).begin(id, choice), 202);
+    if (body.action === "check") return context.json(await teleports(deps).check(id, choice, body.machine));
+    return context.json(await teleports(deps).begin(id, choice, body.machine), 202);
   });
   app.get("/api/v1/cloudroom/threads/:id/share", async context => context.json(await threadShare(deps, context.req.param("id"))));
   app.post("/api/v1/cloudroom/threads/:id/share", async context => {
@@ -399,6 +399,7 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
   app.post("/api/v1/cloudroom/account/copy-logins", async (context) => {
     const input = z.object({ enabled: z.boolean() }).strict().parse(await context.req.json());
     await setCopyLogins(deps, input.enabled);
+    if (input.enabled) void cloudroom(deps).copyLoginsToMachines().catch(() => {});
     return context.json({ ok: true });
   });
   app.post("/api/v1/cloudroom/vm/run", async (context) => {
@@ -407,15 +408,18 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
     const { threadId, ...input } = z.object({ command: z.string().min(1).max(65536), stdin: z.string().max(32 * 1024 * 1024).regex(/^(?:[0-9a-f]{2})*$/).optional(), cwd: z.string().min(1).max(4096).optional(), threadId: z.string().min(1).max(200).optional() }).strict().parse(await context.req.json());
     return context.json(await cloudroom(deps).runOnVm(input, threadId, context.req.raw.signal));
   });
-  const claudeStatus = async () => withClaudeTokenRun(await cloudroom(deps).claudeAuth());
-  app.get("/api/v1/cloudroom/account/claude", async context => context.json(await claudeStatus()));
+  // `thread` (query) or `threadId` (body): sign in on that Cloud thread's own Core instead of the default one.
+  const authThread = z.string().min(1).max(100).optional();
+  const claudeStatus = async (threadId?: string) => withClaudeTokenRun(await cloudroom(deps).claudeAuth(undefined, undefined, undefined, undefined, false, threadId), threadId);
+  app.get("/api/v1/cloudroom/account/claude", async context => context.json(await claudeStatus(authThread.parse(context.req.query("thread")))));
   app.post("/api/v1/cloudroom/account/claude/setup-token", async context => {
     const problem = browserRequestProblem(context, deps, { requireJsonForMutation: true });
     if (problem) return context.json({ message: "Use the local Cloudroom app." }, problem.status);
-    const { requestId } = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/) }).strict().parse(await context.req.json());
+    const { requestId, threadId } = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), threadId: authThread }).strict().parse(await context.req.json());
     await ensureClaudeCli((error) => deps.logger.warn({ error }, "Claude Code could not be installed in the background"));
-    await startClaudeToken(requestId, async token => cloudroom(deps).claudeAuth("token", requestId, token, await claudePlan()), deps);
-    return context.json(await claudeStatus());
+    // The Mac-made token is saved where the sign-in started: the thread's Core, or the default one. One run per target at a time.
+    await startClaudeToken(requestId, async token => cloudroom(deps).claudeAuth("token", requestId, token, await claudePlan(), false, threadId), deps, threadId);
+    return context.json(await claudeStatus(threadId));
   });
   // The Accounts plugin saves the account in use as the Cloud login (ADR 0197).
   app.post("/api/v1/cloudroom/account/claude/token", async context => {
@@ -427,25 +431,25 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
     return context.json(status);
   });
   app.post("/api/v1/cloudroom/account/claude/key", async context => {
-    const parsed = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), apiKey: z.string().refine(isClaudeApiKey) }).strict().safeParse(await context.req.json().catch(() => null));
+    const parsed = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), apiKey: z.string().refine(isClaudeApiKey), threadId: authThread }).strict().safeParse(await context.req.json().catch(() => null));
     if (!parsed.success) throw new ApiError(400, "invalid_claude_key", "Paste an Anthropic API key from the Claude Console. It starts with sk-ant-.");
-    return context.json(await cloudroom(deps).claudeAuth("key", parsed.data.requestId, parsed.data.apiKey));
+    return context.json(await cloudroom(deps).claudeAuth("key", parsed.data.requestId, parsed.data.apiKey, undefined, false, parsed.data.threadId));
   });
   for (const action of ["login", "cancel", "complete"] as const) {
     app.post(`/api/v1/cloudroom/account/claude/${action}`, async context => {
-      const input = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), ...(action === "complete" ? { code: z.string().min(1).max(2048), state: z.string().min(1).max(512) } : {}) }).strict().parse(await context.req.json());
-      if (action === "cancel" && cancelClaudeToken()) return context.json(await claudeStatus());
-      return context.json(await cloudroom(deps).claudeAuth(action, input.requestId, "code" in input ? String(input.code) : undefined, "state" in input ? String(input.state) : undefined));
+      const input = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), threadId: authThread, ...(action === "complete" ? { code: z.string().min(1).max(2048), state: z.string().min(1).max(512) } : {}) }).strict().parse(await context.req.json());
+      if (action === "cancel" && cancelClaudeToken(input.threadId)) return context.json(await claudeStatus(input.threadId));
+      return context.json(await cloudroom(deps).claudeAuth(action, input.requestId, "code" in input ? String(input.code) : undefined, "state" in input ? String(input.state) : undefined, false, input.threadId));
     });
   }
-  app.get("/api/v1/cloudroom/account/cursor", async context => context.json(await cloudroom(deps).cursorAuth()));
+  app.get("/api/v1/cloudroom/account/cursor", async context => context.json(await cloudroom(deps).cursorAuth(undefined, undefined, undefined, authThread.parse(context.req.query("thread")))));
   for (const action of ["login", "cancel", "key"] as const) {
     app.post(`/api/v1/cloudroom/account/cursor/${action}`, async context => {
-      const schema = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), ...(action === "key" ? { apiKey: z.string().min(1).max(4096).regex(/^[!-~]+$/) } : {}) }).strict();
+      const schema = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), threadId: authThread, ...(action === "key" ? { apiKey: z.string().min(1).max(4096).regex(/^[!-~]+$/) } : {}) }).strict();
       const parsed = schema.safeParse(await context.req.json().catch(() => null));
       if (!parsed.success) throw new ApiError(400, "invalid_cursor_auth", "Invalid Cursor account request.");
       const input = parsed.data;
-      return context.json(await cloudroom(deps).cursorAuth(action, input.requestId, "apiKey" in input ? String(input.apiKey) : undefined));
+      return context.json(await cloudroom(deps).cursorAuth(action, input.requestId, "apiKey" in input ? String(input.apiKey) : undefined, input.threadId));
     });
   }
   app.post("/api/v1/cloudroom/account/pi/key", async context => {
@@ -453,7 +457,7 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
     if (!parsed.success) throw new ApiError(400, "invalid_pi_auth", "Invalid Pi key request.");
     return context.json(await cloudroom(deps).piApiKey(parsed.data.provider, parsed.data.apiKey));
   });
-  app.get("/api/v1/cloudroom/account/codex", async context => context.json(await cloudroom(deps).codexAuth()));
+  app.get("/api/v1/cloudroom/account/codex", async context => context.json(await cloudroom(deps).codexAuth(undefined, undefined, authThread.parse(context.req.query("thread")))));
   // The Accounts plugin's Codex accounts (ADR 0195). Responses never hold tokens.
   app.post("/api/v1/cloudroom/account/codex-accounts", async context => {
     const problem = browserRequestProblem(context, deps, { requireJsonForMutation: true });
@@ -475,8 +479,8 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
   });
   for (const action of ["login", "cancel"] as const) {
     app.post(`/api/v1/cloudroom/account/codex/${action}`, async context => {
-      const input = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/) }).strict().parse(await context.req.json());
-      return context.json(await cloudroom(deps).codexAuth(action, input.requestId));
+      const input = z.object({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/), threadId: authThread }).strict().parse(await context.req.json());
+      return context.json(await cloudroom(deps).codexAuth(action, input.requestId, input.threadId));
     });
   }
   const macCodexStatus = (run: ReturnType<typeof macCodexLogin>) =>
@@ -525,6 +529,32 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
     if (problem) return context.json({ message: "Use the local Cloudroom app or CLI." }, problem.status);
     await cloudroom(deps).configure(await context.req.json());
     return context.json(await cloudroom(deps).status());
+  });
+  // Self-hosted Cores (Settings → Machines). A machine gets Mac access like Cloud, so only this computer may change the list.
+  const machineId = (context: { req: { param: (name: string) => string | undefined } }) => {
+    const parsed = machineIdSchema.safeParse(context.req.param("id"));
+    if (!parsed.success) throw new ApiError(404, "cloudroom_machine_not_found", "That Core isn't connected.");
+    return parsed.data;
+  };
+  const localMachines = (context: Parameters<typeof getGateAuthKind>[0]) => {
+    if (getGateAuthKind(context) !== null) throw new ApiError(403, "forbidden", `Manage Cores from the ${COMPUTER}, not remotely.`);
+  };
+  const machines = async () => ({ machines: await cloudroom(deps).machineStatuses() });
+  app.get("/api/v1/cloudroom/machines", async context => context.json(await machines()));
+  app.post("/api/v1/cloudroom/machines", async context => {
+    localMachines(context);
+    await cloudroom(deps).addMachine(await context.req.json().catch(() => null));
+    return context.json(await machines());
+  });
+  app.patch("/api/v1/cloudroom/machines/:id", async context => {
+    localMachines(context);
+    await cloudroom(deps).updateMachine(machineId(context), await context.req.json().catch(() => null));
+    return context.json(await machines());
+  });
+  app.delete("/api/v1/cloudroom/machines/:id", async context => {
+    localMachines(context);
+    await cloudroom(deps).removeMachine(machineId(context));
+    return context.json(await machines());
   });
   app.get("/api/v1/cloudroom/threads/:id", async (context) => {
     const id = context.req.param("id");
@@ -628,7 +658,8 @@ export function installCloudroomRoutes(app: Hono, deps: AppDeps, plugins: Plugin
 async function moveToSandbox(deps: AppDeps, threadId: string, choice?: { model: string; reasoning: string }) {
   const saved = binding(deps.db, threadId);
   if (!saved || sandboxThread(saved.coreUrl)) throw new ApiError(409, "cloudroom_move_unavailable", "Only a thread on your cloud VM can move to its own sandbox.");
+  if (await cloudroom(deps).isMachineUrl(saved.coreUrl)) throw new ApiError(409, "cloudroom_move_unavailable", "This thread runs on your own Core. Teleport it to Local, then to Cloud.");
   if (!await cloudroom(deps).newThreadsInSandboxes()) throw new ApiError(409, "cloudroom_move_unavailable", "Cloud sandboxes are off for this account.");
   await teleportToLocal(deps, threadId);
-  return teleports(deps).begin(threadId, choice);
+  return teleports(deps).begin(threadId, choice, "cloud");
 }

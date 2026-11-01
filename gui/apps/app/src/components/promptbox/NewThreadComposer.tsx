@@ -8,6 +8,9 @@ import {
   cloudReasoningLevels,
   cloudServiceTierSupported,
   cloudroomRequestId,
+  cloudStatusFor,
+  cloudEntries,
+  pickedCloudMachine,
   clearCloudroomRequestId,
 } from "@/hooks/queries/cloudroom-queries";
 import { CLOUD_LOCKED_REASON, showCloudSignIn, useCloudLocked } from "@/hooks/useCloudLocked";
@@ -104,6 +107,8 @@ import { agentExecutionTarget, startingExecutionTarget } from "@/hooks/useStarti
 import { useCloudVps, vpsSummary } from "@/components/settings/VpsSettings";
 
 const CLOUD_TARGET_KEY = "cloudroom.cloudTarget";
+/** A Core id from Settings → Machines, or "cloud" for Cloudroom Cloud. */
+const CLOUD_MACHINE_KEY = "cloudroom.cloudMachine";
 import { useThreadCreationOptions } from "@/hooks/useThreadCreationOptions";
 import { useComposerTextEffects } from "@/lib/composer-text-effects";
 import { getMutationErrorMessage } from "@/lib/mutation-errors";
@@ -226,6 +231,7 @@ export interface NewThreadComposerSubmission extends NewThreadRequest {
   pluginSubmission?: CreateThreadRequest["pluginSubmission"];
   sendAt?: number;
   cloudTarget?: "vps" | "cloud";
+  cloudMachine?: string;
 }
 
 export interface NewThreadComposerProps {
@@ -236,6 +242,8 @@ export interface NewThreadComposerProps {
   seed?: NewThreadComposerSeed;
   resetKey?: string | number | null;
   preferReadyProviderWhenUnset?: boolean;
+  /** A Cloud fork always gets a new sandbox, so the composer offers no Core to pick. */
+  cloudSandboxOnly?: boolean;
   onSubmit: (request: NewThreadComposerSubmission) => void | Promise<void>;
   focusRequest?: number;
   children: (state: NewThreadComposerState) => ReactNode;
@@ -442,13 +450,14 @@ export function NewThreadComposer({
   seed,
   resetKey,
   preferReadyProviderWhenUnset = false,
+  cloudSandboxOnly = false,
   onSubmit,
   focusRequest,
   children,
 }: NewThreadComposerProps) {
   const navigate = useNavigate();
   const cloudConnection = useCloudroomConnection();
-  const cloudLocked = useCloudLocked();
+  const cloudLocked = useCloudLocked(cloudSandboxOnly);
   const [storedExecutionTarget, setExecutionTarget] = useState<
     "local" | "cloud"
   >(
@@ -469,11 +478,21 @@ export function NewThreadComposer({
   });
   const wantedCloudTarget = !vpsConnected ? "cloud" : cloudTarget ?? (vps.data?.useForCloud ? "vps" : "cloud");
   const vpsBusy = vpsConnected && (vps.data?.health === null || vps.data?.busy != null);
-  const landsOnVps = wantedCloudTarget === "vps" && !(vpsBusy && vps.data?.fallback);
+  // A hidden Cloud entry (a Cores-only user) isn't greyed out: anything that picks Cloud lands on `cloudMachine` instead.
+  const { cores: coreMachines, hostedCloud, hidden: cloudHidden } = useMemo(() => cloudEntries(cloudConnection.data, cloudSandboxOnly), [cloudConnection.data, cloudSandboxOnly]);
+  const [pickedMachine, setPickedMachine] = useState<string | null>(() => localStorage.getItem(CLOUD_MACHINE_KEY));
+  const cloudMachine = pickedCloudMachine(pickedMachine, coreMachines, hostedCloud);
+  const landsOnVps = !cloudMachine && wantedCloudTarget === "vps" && !(vpsBusy && vps.data?.fallback);
   const pickCloudTarget = (target: "vps" | "cloud") => {
     setCloudTarget(target);
     localStorage.setItem(CLOUD_TARGET_KEY, target);
   };
+  const pickMachine = (value: string) => {
+    setPickedMachine(value);
+    localStorage.setItem(CLOUD_MACHINE_KEY, value);
+  };
+  // A thread on one of the user's Cores sees that Core's readiness and catalog.
+  const cloudStatus = useMemo(() => cloudStatusFor(cloudConnection.data, cloudMachine ?? (cloudConnection.data?.selfHosted ? "primary" : null)), [cloudConnection.data, cloudMachine]);
   const [cloudBranch, setCloudBranch] = useState<{
     projectId: string | null;
     branch: string | null;
@@ -869,21 +888,21 @@ export function NewThreadComposer({
     ? "local"
     : agentExecutionTarget(storedExecutionTarget, cloudPicked, selectedProviderId);
   useEffect(() => {
-    if (executionTarget !== "cloud" || !cloudConnection.data?.ready) return;
+    if (executionTarget !== "cloud" || !cloudStatus?.ready) return;
     const select = () => void fetchWithAppSurface("/api/v1/cloudroom/account/project", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId }),
     }).catch(() => {});
     select();
     const timer = setInterval(() => { if (document.visibilityState === "visible") select(); }, 5 * 60_000);
     return () => clearInterval(timer);
-  }, [executionTarget, projectId, cloudConnection.data?.ready]);
+  }, [executionTarget, projectId, cloudStatus?.ready]);
   const selectedThreadModel = activeModel?.model ?? selectedModel;
-  const cloudLevels = cloudReasoningLevels(cloudConnection.data, selectedProviderId, selectedThreadModel);
-  const cloudFastSupported = executionTarget === "cloud" && cloudServiceTierSupported(cloudConnection.data, selectedProviderId);
-  const cloudKnown = executionTarget === "cloud" && cloudCatalogKnown(cloudConnection.data);
+  const cloudLevels = cloudReasoningLevels(cloudStatus, selectedProviderId, selectedThreadModel);
+  const cloudFastSupported = executionTarget === "cloud" && cloudServiceTierSupported(cloudStatus, selectedProviderId);
+  const cloudKnown = executionTarget === "cloud" && cloudCatalogKnown(cloudStatus);
   // The cloud queue (docs/scopes/public-launch.md): the card under the composer explains, and Send waits.
-  const cloudQueue = executionTarget === "cloud" && !landsOnVps ? cloudConnection.data?.cloudQueue ?? null : null;
-  const cloudAgentMissing = cloudKnown && !cloudHarness(cloudConnection.data, selectedProviderId);
+  const cloudQueue = executionTarget === "cloud" && !landsOnVps ? cloudStatus?.cloudQueue ?? null : null;
+  const cloudAgentMissing = cloudKnown && !cloudHarness(cloudStatus, selectedProviderId);
   const cloudChoiceReason: CloudChoiceReason | null = cloudLocked
     ? "signed_out"
     : storedExecutionTarget === "cloud" && executionTarget === "local"
@@ -1619,7 +1638,7 @@ export function NewThreadComposer({
     ? null
     : selectedProviderId === "claude-code"
       ? "Claude Code is not configured in Cloud yet."
-      : `${selectedProviderDisplayName ?? "This agent"} isn't available in Cloud. Available: ${cloudHarnessNames(cloudConnection.data)}.`;
+      : `${selectedProviderDisplayName ?? "This agent"} isn't available in Cloud. Available: ${cloudHarnessNames(cloudStatus)}.`;
   const submitDisabledReason =
     executionTarget === "cloud"
       ? (cloudBlockedReason
@@ -1673,7 +1692,7 @@ export function NewThreadComposer({
         reasoningLevel: starterHigh && submittedDraft.text === starterRef.current ? "high" : reasoningLevel,
         permissionMode: executionTarget === "cloud" ? "full" : permissionMode,
         ...(executionTarget === "cloud"
-          ? { executionTarget, serviceTier: cloudFastSupported && serviceTier ? serviceTier : "default", ...(cloudBaseBranch ? { baseBranch: cloudBaseBranch } : {}), ...(vpsConnected ? { cloudTarget: wantedCloudTarget } : {}) }
+          ? { executionTarget, serviceTier: cloudFastSupported && serviceTier ? serviceTier : "default", ...(cloudBaseBranch ? { baseBranch: cloudBaseBranch } : {}), ...(cloudMachine ? { cloudMachine } : vpsConnected ? { cloudTarget: wantedCloudTarget } : coreMachines.length ? { cloudMachine: "cloud" } : {}) }
           : supportsServiceTier && serviceTier
             ? { serviceTier }
             : {}),
@@ -1741,6 +1760,8 @@ export function NewThreadComposer({
       cloudBaseBranch,
       vpsConnected,
       wantedCloudTarget,
+      cloudMachine,
+      coreMachines.length,
       starterHigh,
     ],
   );
@@ -1877,12 +1898,15 @@ export function NewThreadComposer({
           modeConfig={{
             environment: {
               cloud: {
-                selected: executionTarget === "cloud" && !landsOnVps,
+                selected: executionTarget === "cloud" && !landsOnVps && !cloudMachine,
                 unavailableReason: null,
+                ...(cloudHidden ? { hidden: true } : {}),
                 ...(cloudLocked ? { note: CLOUD_LOCKED_REASON } : {}),
                 onSelect: () => {
                   selectCloudTarget();
                   if (vpsConnected && !cloudLocked) pickCloudTarget("cloud");
+                  // A hidden Cloud keeps the Core already picked.
+                  if (coreMachines.length && !cloudHidden) pickMachine("cloud");
                 },
                 ...(vpsConnected && vps.data
                   ? {
@@ -1895,8 +1919,24 @@ export function NewThreadComposer({
                         onSelect: () => {
                           selectCloudTarget();
                           pickCloudTarget("vps");
+                          if (coreMachines.length) pickMachine("cloud");
                         },
                       },
+                    }
+                  : {}),
+                ...(coreMachines.length
+                  ? {
+                      cores: coreMachines.map((machine) => ({
+                        id: machine.id,
+                        name: machine.name,
+                        selected: executionTarget === "cloud" && cloudMachine === machine.id,
+                        ready: machine.ready,
+                        description: machine.ready ? "Your Core" : machine.error ?? "Offline",
+                        onSelect: () => {
+                          selectCloudTarget();
+                          pickMachine(machine.id);
+                        },
+                      })),
                     }
                   : {}),
               },
@@ -1958,7 +1998,7 @@ export function NewThreadComposer({
                   localStorage.setItem("cloudroom.executionTarget", "local");
                 }}
               />
-            ) : <>{executionTarget === "cloud" && wantedCloudTarget === "vps" && !landsOnVps && vps.data ? (
+            ) : <>{executionTarget === "cloud" && !cloudMachine && wantedCloudTarget === "vps" && !landsOnVps && vps.data ? (
               <p className="flex items-center gap-1.5 px-3.5 pt-1.5 text-xs text-muted-foreground">
                 <Icon name="AlertTriangle" className="size-3.5 shrink-0 text-warning-text" aria-hidden />
                 {vps.data.health ? `Your VPS is busy (${vps.data.busy}), so this thread starts in Cloud.` : "Your VPS is offline, so this thread starts in Cloud."}
@@ -2137,6 +2177,9 @@ export function NewThreadComposer({
       vpsConnected,
       landsOnVps,
       wantedCloudTarget,
+      coreMachines,
+      cloudMachine,
+      hostedCloud,
       primaryHostId,
       inputsControlProviderIds,
       providerHostId,

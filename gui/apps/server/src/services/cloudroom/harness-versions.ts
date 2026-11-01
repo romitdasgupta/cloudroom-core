@@ -24,19 +24,21 @@ export function macHarnessVersions(): Promise<HarnessVersions> {
   return cached.versions;
 }
 
-/** Accounts on a shared VM (not sandboxes) keep its Claude Code on the Mac's version. */
-export function startClaudeVersionSync(deps: AppDeps, vm: () => Promise<CloudroomClient>): void {
-  let reported: string | undefined;
+/** Shared Cores (an account's VM, the user's own Cores; not sandboxes) keep their Claude Code on the Mac's version. */
+export function startClaudeVersionSync(deps: AppDeps, cores: () => Promise<CloudroomClient[]>): void {
+  const reported = new Map<string, string | undefined>();
   const sync = async () => {
     const version = (await macHarnessVersions()).claude;
     if (!version) return;
-    try {
-      const result = await (await vm()).matchClaudeVersion(version);
-      const problem = result.error ? `${result.state}: ${result.error}` : undefined;
-      if (problem && problem !== reported) deps.logger?.warn({ target: version, state: result.state, error: result.error }, "Cloud Claude Code version could not match this Mac");
-      reported = problem;
-    } catch {
-      return;
+    for (const core of await cores().catch(() => [])) {
+      try {
+        const result = await core.matchClaudeVersion(version);
+        const problem = result.error ? `${result.state}: ${result.error}` : undefined;
+        if (problem && problem !== reported.get(core.baseUrl)) deps.logger?.warn({ target: version, state: result.state, error: result.error }, "Cloud Claude Code version could not match this Mac");
+        reported.set(core.baseUrl, problem);
+      } catch {
+        continue;
+      }
     }
   };
   setTimeout(() => void sync(), 30_000).unref();

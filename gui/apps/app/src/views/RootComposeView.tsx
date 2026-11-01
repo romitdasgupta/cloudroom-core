@@ -637,6 +637,7 @@ export function RootComposeView() {
       seed={composerSeed}
       resetKey={forkSeed?.sourceThreadId ?? null}
       preferReadyProviderWhenUnset={forkSeed === null}
+      cloudSandboxOnly={forkSeed !== null}
       onSubmit={handleSubmit}
     >
       {(composer) => (

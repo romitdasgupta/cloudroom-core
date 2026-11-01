@@ -28,7 +28,7 @@ Cloudroom is a desktop app for AI coding agents. Start them on your Mac, or give
 - **Your own subscriptions.** Agents use your Claude and ChatGPT logins, with no token markup.
 - **Mac access.** Cloud agents can reach your Mac. You pick Off, Read-only, Ask first, or Full.
 - **Teleport.** Move a running thread to the cloud and back. Same chat, model, and effort.
-- **Your own cloud.** Run the core on your own Linux machine. No Cloudroom account needed.
+- **Your own cloud.** Run the core on your own Linux machines: a local VM, a VPS, or a cloud VM. Connect as many as you like and pick one per thread. No Cloudroom account needed.
 
 For Apple Silicon Macs (macOS 13+), Linux x64 (alpha), and Windows 11 (beta).
 
@@ -67,7 +67,7 @@ cargo build --locked --release
 cargo test --locked --all-targets
 ```
 
-Core docs: [HTTP API](core/docs/api.md) · [storage](core/docs/storage.md) · [harnesses](core/docs/harnesses.md) · [session lifecycle](core/docs/session-lifecycle.md) · [diagnostics](core/docs/observability.md) · [dashboard API](core/docs/dashboard.md)
+Core docs: [own Cores in the app](gui/docs/own-cores.md) · [HTTP API](core/docs/api.md) · [storage](core/docs/storage.md) · [harnesses](core/docs/harnesses.md) · [session lifecycle](core/docs/session-lifecycle.md) · [diagnostics](core/docs/observability.md) · [dashboard API](core/docs/dashboard.md)
 
 ## How the cloud works
 

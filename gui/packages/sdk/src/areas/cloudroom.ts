@@ -15,12 +15,32 @@ export interface CloudroomStorage {
 /** Mac access levels (ADR 0186). */
 export type MacAccessLevel = "off" | "read-only" | "ask" | "full";
 
+/** One harness a Cloud Core offers, as its capabilities list it. */
+export interface CloudroomHarness {
+  id: string; model: string; provider?: string | null; reasoning_levels: string[];
+  models?: { model: string; reasoning_levels: string[] }[] | null;
+  service_tier?: boolean; steer?: boolean; compact?: boolean; rewind?: boolean; prompt_reasoning?: boolean;
+}
+
+/** A Core the user hosts (Settings → Machines). `primary` is the one connected on the Account page. Tokens never leave the app. */
+export interface CloudroomMachineStatus {
+  id: string; name: string; url: string; default: boolean; ready: boolean; error: string | null;
+  harnesses: CloudroomHarness[] | null; threads: number;
+  /** This Core's own feature flags, which gate the controls of threads on it. Older apps' servers leave them out. */
+  steer?: boolean; rewind?: boolean; compact?: boolean; queue_edit?: boolean; queue_cancel?: boolean; queue_reorder?: boolean;
+}
+export type CloudroomMachineInput = { name: string; url: string; token: string; gateToken?: string };
+
 export interface CloudroomStatus {
   storage?: CloudroomStorage | null;
   ready: boolean;
   account: { id: string; email: string } | null;
   /** Connected to a core the user hosts, by URL and token, without a Cloudroom account. */
   selfHosted?: boolean;
+  /** What the Core new threads go to offers; null while unknown. */
+  harnesses?: CloudroomHarness[] | null;
+  /** Self-hosted Cores, when any are connected. */
+  machines?: CloudroomMachineStatus[];
   projectId: string | null;
   repository: string | null;
   model: string | null;
@@ -229,21 +249,25 @@ export type CodexAccountsResult =
   | { sessionId: string; verificationUri: string; userCode: string; expiresAt: number }
   | { status: "pending" | "complete" | "error"; message: string | null };
 
-export interface ClaudeAccountInput { action?: "login" | "cancel" | "complete" | "setup-token" | "key" | "token"; requestId?: string; code?: string; state?: string; apiKey?: string; token?: string; plan?: string; follow?: boolean }
+export interface ClaudeAccountInput { action?: "login" | "cancel" | "complete" | "setup-token" | "key" | "token"; requestId?: string; code?: string; state?: string; apiKey?: string; token?: string; plan?: string; follow?: boolean;
+  /** Signs in on this Cloud thread's own Core instead of the default one. Not for `token`, which the Accounts plugin sends for the default login. */
+  threadId?: string }
 
 export interface CloudroomArea {
   claudeAuth(input?: ClaudeAccountInput, signal?: AbortSignal): Promise<CloudroomCodexAuth>;
   /** Lists, signs in, selects, renames, orders, or removes Codex accounts. `list` answers `{ signedIn, accounts }`,
    *  `start` the device code, and `poll` the sign-in's status. Other actions answer the new list. */
   codexAccounts(input: CodexAccountsInput, signal?: AbortSignal): Promise<CodexAccountsResult>;
-  cursorAuth(signal?: AbortSignal): Promise<CloudroomCodexAuth>;
-  cursorLogin(requestId: string): Promise<CloudroomCodexAuth>;
-  cancelCursorLogin(requestId: string): Promise<CloudroomCodexAuth>;
-  cursorApiKey(requestId: string, apiKey: string): Promise<CloudroomCodexAuth>;
+  /** With `threadId`, the Cursor login of that Cloud thread's own Core rather than the default one. */
+  cursorAuth(signal?: AbortSignal, threadId?: string): Promise<CloudroomCodexAuth>;
+  cursorLogin(requestId: string, threadId?: string): Promise<CloudroomCodexAuth>;
+  cancelCursorLogin(requestId: string, threadId?: string): Promise<CloudroomCodexAuth>;
+  cursorApiKey(requestId: string, apiKey: string, threadId?: string): Promise<CloudroomCodexAuth>;
   piApiKey(provider: string, apiKey: string): Promise<{ providers: string[] }>;
-  codexAuth(signal?: AbortSignal): Promise<CloudroomCodexAuth>;
-  codexLogin(requestId: string): Promise<CloudroomCodexAuth>;
-  cancelCodexLogin(requestId: string): Promise<CloudroomCodexAuth>;
+  /** With `threadId`, the Codex login of that Cloud thread's own Core rather than the default one. */
+  codexAuth(signal?: AbortSignal, threadId?: string): Promise<CloudroomCodexAuth>;
+  codexLogin(requestId: string, threadId?: string): Promise<CloudroomCodexAuth>;
+  cancelCodexLogin(requestId: string, threadId?: string): Promise<CloudroomCodexAuth>;
   /** GitHub for cloud sandboxes: connected when this Mac's `gh` is signed in or the website holds a login. Login runs GitHub's device flow. */
   githubAuth(signal?: AbortSignal): Promise<CloudroomCodexAuth>;
   githubLogin(requestId: string): Promise<CloudroomCodexAuth>;
@@ -268,6 +292,13 @@ export interface CloudroomArea {
   signIn(input?: { projectId?: string; websiteUrl?: string; provider?: "github" | "google" }): Promise<{ url: string }>;
   /** Connects a self-hosted core by its HTTPS URL and API token. The backend checks it before saving. */
   connect(input: { url: string; token: string }): Promise<void>;
+  /** Self-hosted Cores (Settings → Machines). Every call answers the new list. */
+  machines: {
+    list(signal?: AbortSignal): Promise<CloudroomMachineStatus[]>;
+    add(input: CloudroomMachineInput): Promise<CloudroomMachineStatus[]>;
+    update(id: string, input: { name?: string; default?: boolean }): Promise<CloudroomMachineStatus[]>;
+    remove(id: string): Promise<CloudroomMachineStatus[]>;
+  };
   /** `true` means Full access. */
   setMacAccess(access: boolean | MacAccessLevel): Promise<void>;
   setCopyLogins(enabled: boolean): Promise<void>;
@@ -312,10 +343,10 @@ export interface CloudroomArea {
   retryStart(threadId: string): Promise<void>;
   /** Copies a Cloud thread's project into its folder again after the copy failed. */
   retryCopy(threadId: string): Promise<void>;
-  /** `choice` runs the cloud thread on another model when the cloud cannot offer the local one. */
-  teleport(threadId: string, action?: "start" | "cancel", choice?: { model: string; reasoning: string }): Promise<TeleportProgress>;
+  /** `choice` runs the cloud thread on another model when the cloud cannot offer the local one. `machine` picks a Core (Settings → Machines). */
+  teleport(threadId: string, action?: "start" | "cancel", choice?: { model: string; reasoning: string }, machine?: string): Promise<TeleportProgress>;
   teleportStatus(threadId: string, signal?: AbortSignal): Promise<TeleportProgress | null>;
-  teleportCheck(threadId: string, choice?: { model: string; reasoning: string }): Promise<{ model: string; reasoning: string; warnings: string[] }>;
+  teleportCheck(threadId: string, choice?: { model: string; reasoning: string }, machine?: string): Promise<{ model: string; reasoning: string; warnings: string[] }>;
   /** Moves a Cloud thread back to this Mac. `conflicts` counts cloud files saved under `.cloudroom/teleport/` because the local copy also changed. */
   teleportLocal(threadId: string): Promise<{ conflicts: number }>;
   /** Copies a cloud thread's branch into the Mac project without stopping its agent. */
@@ -384,17 +415,22 @@ export function createCloudroomArea({ transport }: CreateSdkAreaArgs): Cloudroom
     method: body === undefined ? "GET" : "POST", signal,
     ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   });
+  const onThread = (threadId?: string) => threadId ? `?thread=${encodeURIComponent(threadId)}` : "";
+  // Mutations need a JSON content type, DELETE included, so it carries an empty object.
+  const machinesCall = (path: string, method: string, body?: object, signal?: AbortSignal) => (transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/machines${path}`, {
+    method, signal, headers: { "Content-Type": "application/json" }, ...(method === "GET" ? {} : { body: JSON.stringify(body ?? {}) }),
+  })) as Promise<{ machines: CloudroomMachineStatus[] }>).then(result => result.machines);
   return {
-    claudeAuth: (input, signal) => transport.readJson(request(`/claude${input?.action ? `/${input.action}` : ""}`, input?.action ? { requestId: input.requestId, ...(input.action === "complete" ? { code: input.code, state: input.state } : {}), ...(input.action === "key" ? { apiKey: input.apiKey } : {}), ...(input.action === "token" ? { token: input.token, plan: input.plan, ...(input.follow ? { follow: true } : {}) } : {}) } : undefined, signal)) as Promise<CloudroomCodexAuth>,
+    claudeAuth: (input, signal) => transport.readJson(request(`/claude${input?.action ? `/${input.action}` : onThread(input?.threadId)}`, input?.action ? { requestId: input.requestId, ...(input.action === "complete" ? { code: input.code, state: input.state } : {}), ...(input.action === "key" ? { apiKey: input.apiKey } : {}), ...(input.action === "token" ? { token: input.token, plan: input.plan, ...(input.follow ? { follow: true } : {}) } : {}), ...(input.threadId && input.action !== "token" ? { threadId: input.threadId } : {}) } : undefined, signal)) as Promise<CloudroomCodexAuth>,
     codexAccounts: (input, signal) => transport.readJson(request("/codex-accounts", input, signal)) as Promise<CodexAccountsResult>,
-    cursorAuth: (signal) => transport.readJson(request("/cursor", undefined, signal)) as Promise<CloudroomCodexAuth>,
-    cursorLogin: (requestId) => transport.readJson(request("/cursor/login", { requestId })) as Promise<CloudroomCodexAuth>,
-    cancelCursorLogin: (requestId) => transport.readJson(request("/cursor/cancel", { requestId })) as Promise<CloudroomCodexAuth>,
-    cursorApiKey: (requestId, apiKey) => transport.readJson(request("/cursor/key", { requestId, apiKey })) as Promise<CloudroomCodexAuth>,
+    cursorAuth: (signal, threadId) => transport.readJson(request(`/cursor${onThread(threadId)}`, undefined, signal)) as Promise<CloudroomCodexAuth>,
+    cursorLogin: (requestId, threadId) => transport.readJson(request("/cursor/login", { requestId, ...(threadId ? { threadId } : {}) })) as Promise<CloudroomCodexAuth>,
+    cancelCursorLogin: (requestId, threadId) => transport.readJson(request("/cursor/cancel", { requestId, ...(threadId ? { threadId } : {}) })) as Promise<CloudroomCodexAuth>,
+    cursorApiKey: (requestId, apiKey, threadId) => transport.readJson(request("/cursor/key", { requestId, apiKey, ...(threadId ? { threadId } : {}) })) as Promise<CloudroomCodexAuth>,
     piApiKey: (provider, apiKey) => transport.readJson(request("/pi/key", { provider, apiKey })) as Promise<{ providers: string[] }>,
-    codexAuth: (signal) => transport.readJson(request("/codex", undefined, signal)) as Promise<CloudroomCodexAuth>,
-    codexLogin: (requestId) => transport.readJson(request("/codex/login", { requestId })) as Promise<CloudroomCodexAuth>,
-    cancelCodexLogin: (requestId) => transport.readJson(request("/codex/cancel", { requestId })) as Promise<CloudroomCodexAuth>,
+    codexAuth: (signal, threadId) => transport.readJson(request(`/codex${onThread(threadId)}`, undefined, signal)) as Promise<CloudroomCodexAuth>,
+    codexLogin: (requestId, threadId) => transport.readJson(request("/codex/login", { requestId, ...(threadId ? { threadId } : {}) })) as Promise<CloudroomCodexAuth>,
+    cancelCodexLogin: (requestId, threadId) => transport.readJson(request("/codex/cancel", { requestId, ...(threadId ? { threadId } : {}) })) as Promise<CloudroomCodexAuth>,
     githubAuth: (signal) => transport.readJson(request("/github", undefined, signal)) as Promise<CloudroomCodexAuth>,
     repoSuggestions: (signal) => transport.readJson(request("/repo-suggestions", undefined, signal)) as Promise<{ githubConnected: boolean; repos: RepoSuggestion[] }>,
     addGithubRepo: (input) => transport.readJson(request("/repo-suggestions/github", input)) as Promise<{ projectId: string }>,
@@ -409,6 +445,12 @@ export function createCloudroomArea({ transport }: CreateSdkAreaArgs): Cloudroom
     status: (signal) => transport.readJson(request("", undefined, signal)) as Promise<CloudroomStatus>,
     signIn: (input = {}) => transport.readJson(request("/sign-in", input)) as Promise<{ url: string }>,
     connect: (input) => transport.readVoid(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) })),
+    machines: {
+      list: (signal) => machinesCall("", "GET", undefined, signal),
+      add: (input) => machinesCall("", "POST", input),
+      update: (id, input) => machinesCall(`/${encodeURIComponent(id)}`, "PATCH", input),
+      remove: (id) => machinesCall(`/${encodeURIComponent(id)}`, "DELETE"),
+    },
     cancel: () => transport.readVoid(request("/cancel", {})),
     setMacAccess: (access) => transport.readVoid(request("/mac-access", typeof access === "boolean" ? { enabled: access } : { level: access })),
     setCopyLogins: (enabled) => transport.readVoid(request("/copy-logins", { enabled })),
@@ -434,8 +476,8 @@ export function createCloudroomArea({ transport }: CreateSdkAreaArgs): Cloudroom
     logout: () => transport.readVoid(request("/logout", {})),
     threadStatus: (threadId, signal) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}`, { signal })) as Promise<{ model: string; reasoning: string } | null>,
     threadWorkspace: (threadId, signal) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/workspace`, { signal })) as Promise<CloudroomThreadWorkspace | null>,
-    teleport: (threadId, action = "start", choice) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/teleport`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...choice }) })) as Promise<TeleportProgress>,
-    teleportCheck: (threadId, choice) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/teleport`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "check", ...choice }) })) as Promise<{ model: string; reasoning: string; warnings: string[] }>,
+    teleport: (threadId, action = "start", choice, machine) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/teleport`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, ...choice, ...(machine ? { machine } : {}) }) })) as Promise<TeleportProgress>,
+    teleportCheck: (threadId, choice, machine) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/teleport`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "check", ...choice, ...(machine ? { machine } : {}) }) })) as Promise<{ model: string; reasoning: string; warnings: string[] }>,
     teleportStatus: (threadId, signal) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/teleport`, { signal })) as Promise<TeleportProgress | null>,
     teleportLocal: (threadId) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/teleport`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "local" }) })) as Promise<{ conflicts: number }>,
     moveToSandbox: (threadId) => transport.readJson(transport.fetch(`${transport.baseUrl}/api/v1/cloudroom/threads/${encodeURIComponent(threadId)}/teleport`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "move" }) })) as Promise<TeleportProgress>,
