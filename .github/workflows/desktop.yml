@@ -54,7 +54,8 @@ jobs:
           - os: ubuntu-24.04
             name: linux-x64
             builder: --linux --x64
-          - os: windows-latest
+          # windows-latest ships Visual Studio 18, which pnpm 9's node-gyp can't find to build better-sqlite3.
+          - os: windows-2022
             name: windows-x64
             builder: --win --x64
     runs-on: ${{ matrix.os }}
