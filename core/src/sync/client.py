@@ -90,6 +90,11 @@ def configuration_roots(roots):
     return [r for r in roots if r['tree']['kind'] in {'skills', 'codex', 'pi', 'claude', 'cursor', *MCP}]
 
 
+def receipt_name(kind, connection):
+    """A registered machine keeps its own import receipt, so it never resets the paired core's."""
+    return f"{kind}-{connection['id']}.json" if 'id' in connection else f'{kind}.json'
+
+
 def import_codex(config, connection, folder):
     folder = Path(folder)
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -131,7 +136,7 @@ def import_codex(config, connection, folder):
             return status
         attempt = {'binding': [connection['url'].rstrip('/'), (connection.get('account') or {}).get('id')],
                    'fingerprint': hashlib.sha256(raw).hexdigest()}
-        receipt = folder / 'codex-import.json'
+        receipt = folder / receipt_name('codex-import', connection)
         if receipt.exists() and private_json(receipt) == attempt:
             return status
         status = remote.json('/v1/accounts/codex/import', credentials)
@@ -218,7 +223,7 @@ def import_pi(config, connection, folder):
         return None
     attempt = {'binding': [connection['url'].rstrip('/'), (connection.get('account') or {}).get('id')],
                'fingerprint': hashlib.sha256(b'\0'.join(files)).hexdigest()}
-    receipt = Path(folder) / 'pi-import.json'
+    receipt = Path(folder) / receipt_name('pi-import', connection)
     if receipt.exists() and private_json(receipt) == attempt:
         return None
     remote = Remote(connection, config.get('device', ''))
@@ -442,6 +447,7 @@ def main():
     parser.add_argument('--connection', type=Path)
     parser.add_argument('--no-start', action='store_true', help='Prepare configuration without installing a background job')
     parser.add_argument('--copy-logins', choices=['on', 'off'], help="The user's first-run choice to copy logins and model providers to the VM")
+    parser.add_argument('--machine', help='A registered Core (Settings → Machines): copy logins there, not to the paired core')
     args = parser.parse_args()
     if args.command == 'configure':
         result = configure(args.directory, args.connection, not args.no_start, None if args.copy_logins is None else args.copy_logins == 'on')
@@ -450,7 +456,16 @@ def main():
     elif args.command in {'auth', 'pi-auth'}:
         config_path = args.directory / 'config.json'
         config = private_json(config_path) if config_path.exists() else {}
-        connection = load_connection(config) if config else private_json(args.connection)
+        if args.machine:
+            if args.connection is None or not re.fullmatch(r'm_[0-9a-f]{12}', args.machine):
+                raise ValueError('--machine needs --connection and a machine id')
+            connection = next((m for m in private_json(args.connection).get('machines') or [] if m.get('id') == args.machine), None)
+            if connection is None:
+                raise ValueError('machine not found')
+            args.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            config = {**config, 'copyLogins': args.copy_logins == 'on'}  # The app passes the user's choice (ADR 0130).
+        else:
+            connection = load_connection(config) if config else private_json(args.connection)
         result = (import_codex if args.command == 'auth' else import_pi)(config, connection, args.directory)
     elif args.command == 'pi-setup':
         result = pi_setup(os.environ.get('PI_CODING_AGENT_DIR') or Path.home() / '.pi/agent')

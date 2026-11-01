@@ -72,6 +72,16 @@ export async function setupPreviews(deps: Deps): Promise<void> {
   } catch { throw new ApiError(503, "cloudroom_preview_setup", "Cloud previews could not start. Inspect the private preview helper status. Cloud sessions are unaffected."); }
 }
 
+/** Tells a removed Core to forget this computer's preview device and SSH key, as sign-out does. Best effort: it may be offline. */
+export async function forgetPreviewDevice(deps: Deps, core: { url: string; token: string; gateToken?: string }): Promise<void> {
+  const device: unknown = await readFile(join(folder(deps), "config.json"), "utf8").then(text => JSON.parse(text).device, () => null);
+  if (typeof device !== "string" || !device) return;
+  await fetch(`${core.url}/v1/previews/device/${encodeURIComponent(device)}`, {
+    method: "DELETE", redirect: "error", signal: AbortSignal.timeout(5000),
+    headers: { Authorization: `Bearer ${core.token}`, "X-Cloudroom-Token": core.token, ...(core.gateToken ? { Cookie: `_port_auth=${core.gateToken}` } : {}) },
+  }).catch(() => {});
+}
+
 export async function stopPreviews(deps: Deps): Promise<void> {
   if (!await readFile(join(folder(deps), "config.json")).then(() => true, () => false)) return;
   try {

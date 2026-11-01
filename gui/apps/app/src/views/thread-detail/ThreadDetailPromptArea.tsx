@@ -371,7 +371,7 @@ async function runWhileFollowUpShortcutSending(
 }
 
 import { showCloudSignIn, useCloudLocked } from "@/hooks/useCloudLocked";
-import { useCloudroomThread, useSetCloudReasoning, useCloudroomThreadWorkspace, useCloudroomConnection, useRetryCloudStart, useTeleportThread, useTeleportLocal, useTeleportDirection, cloudroomRequestId, clearCloudroomRequestId, cloudReasoningLevels, cloudServiceTierSupported, cloudFeatureSupported, cloudCanRunHarness, cloudHarness } from "@/hooks/queries/cloudroom-queries";
+import { useCloudroomThread, useSetCloudReasoning, useCloudroomThreadWorkspace, useCloudroomConnection, cloudStatusFor, useRetryCloudStart, useTeleportThread, useTeleportLocal, useTeleportDirection, cloudroomRequestId, clearCloudroomRequestId, cloudReasoningLevels, cloudServiceTierSupported, cloudFeatureSupported, cloudCanRunHarness, cloudHarness } from "@/hooks/queries/cloudroom-queries";
 import { reasoningLevelSchema } from "@cloudroom/domain";
 import { reasoningLevelLabel } from "@/lib/reasoning-labels";
 import { useCopyCommand } from "@/hooks/useCopyCommand";
@@ -471,7 +471,11 @@ export function ThreadDetailPromptArea({
       ? { ...display, stale: true, title: `${display.title} (last known, cloud not reachable right now)` }
       : display;
   }, [cloudWorkspace.data, cloudWorkspace.isError]);
-  const cloudConnection = useCloudroomConnection();
+  const cloudConnectionQuery = useCloudroomConnection();
+  // A thread on one of the user's Cores sees that Core's catalog.
+  const cloudMachineId = cloudState.data?.machine?.id;
+  const cloudConnectionData = useMemo(() => cloudStatusFor(cloudConnectionQuery.data, cloudMachineId), [cloudConnectionQuery.data, cloudMachineId]);
+  const cloudConnection = { data: cloudConnectionData };
   const setCloudReasoning = useSetCloudReasoning(thread.id);
   const cloudReasoning = (setCloudReasoning.isPending ? setCloudReasoning.variables : undefined) ?? cloudState.data?.reasoning ?? "medium";
   const { mutate: updateExecution } = useUpdateThread({
@@ -2177,7 +2181,7 @@ export function ThreadDetailPromptArea({
   const cloudStatusDismissed = dismissedCloudStatus === cloudStatusKey;
   const cloudAuthNotice = isCloud && !shouldHideComposer && cloudState.data?.authRequired ? (
     <PromptStackCard ariaLabel="Connect your account" className="w-full max-w-sm justify-self-center p-3 text-xs">
-      {claudeThread ? <ClaudeSignIn target={{ target: "cloud" }} onContinue={() => retryCloudStart.mutate()} continuing={retryCloudStart.isPending} /> : (
+      {claudeThread ? <ClaudeSignIn target={{ target: "cloud", threadId: thread.id }} onContinue={() => retryCloudStart.mutate()} continuing={retryCloudStart.isPending} /> : (
         <div className="flex items-center justify-between gap-2">
           <div>
             <p className="text-sm font-medium">Connect {thread.providerId === "acp-cursor" ? "Cursor" : "Codex"} to start</p>

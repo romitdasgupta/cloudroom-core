@@ -1,6 +1,9 @@
 const DESKTOP_RELEASE_CHANNEL_ENV_NAME = "BB_DESKTOP_RELEASE_CHANNEL";
 
+// A fork's own builds set BB_DESKTOP_UPDATE_BASE_URL (as scripts/build.mjs bakes into the app), so its
+// electron-updater feed is the fork's releases too, never the official ones.
 export const CLOUDROOM_UPDATE_BASE_URL =
+  process.env.BB_DESKTOP_UPDATE_BASE_URL?.trim() ||
   "https://github.com/davidondrej/cloudroom/releases/latest/download/";
 
 export function resolveDesktopReleaseChannel(env) {

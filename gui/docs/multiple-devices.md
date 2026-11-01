@@ -9,6 +9,9 @@ There are two separate ways to use more than one device with bb:
 
 You can use either story independently or combine them.
 
+Cloud threads on Cores you host (a local VM, a VPS, a cloud VM) are separate
+again: see [own-cores.md](own-cores.md).
+
 ## Open bb from another browser
 
 The simplest managed route is **Cloudroom Connect**. Once you are signed in to

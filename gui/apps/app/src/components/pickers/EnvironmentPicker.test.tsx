@@ -296,6 +296,52 @@ describe("EnvironmentPickerUI Cloudroom checkout menu", () => {
     expect(local.getAttribute("aria-disabled")).not.toBe("true");
   });
 
+  it.each([false, true])("lists the user's Cores under Cloud (selected: %s)", (coreSelected) => {
+    const onSelectCore = vi.fn();
+    renderPicker(
+      <EnvironmentPickerUI
+        value="provider:project-checkout"
+        sources={sources}
+        host={host}
+        isLocal
+        providers={[checkoutProvider, worktreeProvider, sandboxProvider]}
+        selectedProviderHostId={host.id}
+        cloud={{ selected: false, unavailableReason: null, onSelect: vi.fn(), cores: [{ id: "m_0123456789ab", name: "Home", selected: coreSelected, ready: true, description: "Your Core", onSelect: onSelectCore }] }}
+        onSelectProvider={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Environment" });
+    expect(trigger.querySelector("[data-promptbox-full-label]")?.textContent).toBe(coreSelected ? "Home" : "Local");
+    fireEvent.click(trigger);
+    expect(screen.getAllByRole("option").map((item) => item.textContent)).toEqual(["Local", "Local Worktree", "Cloud", "HomeYour Core"]);
+    expect(screen.getByRole("option", { name: "Local" }).getAttribute("aria-current") === "true").toBe(!coreSelected);
+    fireEvent.click(screen.getByRole("option", { name: /^Home/ }));
+    expect(onSelectCore).toHaveBeenCalledOnce();
+  });
+
+  it("leaves out the Cloud row when there is no Cloudroom Cloud, keeping the Cores", () => {
+    renderPicker(
+      <EnvironmentPickerUI
+        value="provider:project-checkout"
+        sources={sources}
+        host={host}
+        isLocal
+        providers={[checkoutProvider, worktreeProvider, sandboxProvider]}
+        selectedProviderHostId={host.id}
+        cloud={{ selected: false, unavailableReason: null, hidden: true, onSelect: vi.fn(), cores: [
+          { id: "m_0123456789ab", name: "Home", selected: true, ready: true, description: "Your Core", onSelect: vi.fn() },
+          { id: "m_ba9876543210", name: "Lab", selected: false, ready: false, description: "Offline", onSelect: vi.fn() },
+        ] }}
+        onSelectProvider={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole("button", { name: "Environment" });
+    expect(trigger.querySelector("[data-promptbox-full-label]")?.textContent).toBe("Home");
+    fireEvent.click(trigger);
+    expect(screen.getAllByRole("option").map((item) => item.textContent)).toEqual(["Local", "Local Worktree", "HomeYour Core", "LabOffline"]);
+    expect(screen.queryByRole("option", { name: "Cloud" })).toBeNull();
+  });
+
   it("lists every machine with Primary and Worktree, and names a picked remote machine", () => {
     const vm = makeHost({ id: "host_vm", name: "debian-vm" });
     const onSelectProvider = vi.fn();

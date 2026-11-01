@@ -131,19 +131,24 @@ def website(config, connection):
 
 
 class Core:
-    """The paired VM's core, or, with `url` and `token`, one awake cloud sandbox's core."""
-    def __init__(self, config, url=None, token=None, thread=None):
+    """The paired VM's core; with `machine`, a registered Core from Settings → Machines; with `url` and `token`, one
+    awake cloud sandbox's core."""
+    def __init__(self, config, url=None, token=None, thread=None, machine=None):
         connection = private_json(config['connectionFile'])
         self.config, self.connection = config, connection
+        self.machine = machine['id'] if machine else None
+        source = machine or connection
         self.sandbox, self.thread = url is not None, thread
-        self.url = (url or connection['url']).rstrip('/')
+        # A sandbox or a registered machine may be asleep or offline; the others keep working.
+        self.extra = self.sandbox or self.machine is not None
+        self.url = (url or source['url']).rstrip('/')
         parts = urllib.parse.urlsplit(self.url)
         if (parts.scheme != 'https' and not (parts.scheme == 'http' and parts.hostname in {'localhost', '127.0.0.1', '::1'})) or parts.username or parts.password or parts.query or parts.fragment:
             raise ValueError('Use an authenticated HTTPS core connection')
-        if not self.sandbox and config['binding'] != [self.url, (connection.get('account') or {}).get('id')]:
+        if not self.extra and config['binding'] != [self.url, (connection.get('account') or {}).get('id')]:
             raise ValueError('Preview connection belongs to another account or VM')
-        token = token if self.sandbox else connection.get('token', '')
-        gate = None if self.sandbox else connection.get('gateToken')
+        token = token if self.sandbox else source.get('token', '')
+        gate = None if self.sandbox else source.get('gateToken')
         if not token or any(ord(c) < 33 or ord(c) > 126 for c in token):
             raise ValueError('Sign in to Cloudroom again')
         if gate is not None and (not gate or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._~-' for c in gate)):
@@ -242,9 +247,16 @@ def issuer(url):
 
 
 def cores(config):
-    """The paired VM's core, if any, then every awake cloud sandbox's core (docs/scopes/sandboxes.md)."""
+    """The paired VM's core, if any, every registered machine's, then every awake cloud sandbox's core
+    (docs/scopes/sandboxes.md)."""
     connection = private_json(config['connectionFile'])
-    found = [Core(config)] if connection.get('url') else []
+    # Sign-out keeps the address and drops the token; the machines keep working.
+    primary = (connection.get('url') or '').rstrip('/') if connection.get('token') else ''
+    found = [Core(config)] if primary else []
+    for machine in connection.get('machines') or []:
+        with contextlib.suppress(ValueError, KeyError, TypeError, AttributeError):
+            if machine['url'].rstrip('/') != primary:
+                found.append(Core(config, machine=machine))
     account, token = (connection.get('account') or {}).get('id'), connection.get('sandboxToken')
     if not account or not token:
         PROBLEMS.pop('sandboxes', None)
@@ -567,7 +579,7 @@ class Tunnel:
         self.endpoint, self.core = metadata, core
         self.port, self.generation = port, generation
         self.relay = bool(metadata.get('tunnel'))
-        suffix = hashlib.sha256(core.url.encode()).hexdigest()[:8] if core.sandbox else ''
+        suffix = hashlib.sha256(core.url.encode()).hexdigest()[:8] if core.extra else ''
         self.socket_path = folder / f'p{port}{suffix}.sock'
         self.socket_path.unlink(missing_ok=True)
         self.log_path = folder / f'ssh-{port}{suffix}.log'
@@ -778,7 +790,8 @@ def review(core, job, level, script):
         sent = REVIEWS['sent']
         for old in [k for k, at in sent.items() if now - at > 3600]:
             del sent[old]
-        if not account or not token or key in sent or not REVIEWS['slots'].acquire(blocking=False):
+        # A registered machine is self-hosted, like a Core connected without an account: its commands stay off the website.
+        if not account or not token or core.machine or key in sent or not REVIEWS['slots'].acquire(blocking=False):
             return
         sent[key] = now
 
@@ -1064,7 +1077,7 @@ def run(folder):
                 try:
                     config = private_json(folder / 'config.json')
                     listed = cores(config)
-                    vm = next((core for core in listed if not core.sandbox), None)
+                    vm = next((core for core in listed if not core.extra), None)
                     if vm and credential != vm.headers:
                         credential, prepare_due, refresh, denied = vm.headers, 0, True, None
                     if config.pop('revoked', False):
@@ -1080,19 +1093,19 @@ def run(folder):
                     if denied:
                         raise denied
                     desired, reached, failure = {}, 0, None
-                    # Sandboxes first, so a VM that turns this Mac away can't block their Mac access.
-                    for core in sorted(listed, key=lambda core: not core.sandbox):
+                    # Sandboxes and machines first, so a VM that turns this Mac away can't block their Mac access.
+                    for core in sorted(listed, key=lambda core: not core.extra):
                         try:
                             metadata = core.request('/device', {'device': config['device'], 'public_key': identity(folder)})
-                            reached += core.sandbox
+                            reached += core.extra
                             for entry in core.request('')['previews']:
                                 port = entry['port']
                                 if type(port) is not int or not 1024 <= port <= 65535 or not isinstance(entry['generation'], str):
                                     raise ValueError('Invalid preview registration')
                                 desired[(core.key, port)] = (core, entry['generation'], metadata)
                         except (OSError, ValueError) as error:
-                            if not core.sandbox:
-                                raise  # A sandbox may fall asleep at any moment; the others keep working.
+                            if not core.extra:
+                                raise  # A sandbox may fall asleep, or a machine go offline, at any moment; the others keep working.
                             # An HTTP answer means this Mac reaches sandboxes and the sandbox side declined: paired with
                             # another Mac, still waking up, or about to leave the list. Only a network failure counts.
                             if getattr(error, 'code', None):
@@ -1116,7 +1129,7 @@ def run(folder):
                         if key in tunnels:
                             continue
                         port = key[1]
-                        name = f'{urllib.parse.urlsplit(core.url).hostname}:{port}' if core.sandbox else str(port)
+                        name = f'{urllib.parse.urlsplit(core.url).hostname}:{port}' if core.extra else str(port)
                         local_port = ports.get(name, port)
                         if type(local_port) is not int or not 1024 <= local_port <= 65535:
                             local_port = port
@@ -1141,10 +1154,10 @@ def run(folder):
                             tunnel.core.request('/report', {'device': config['device'], 'port': tunnel.port, 'generation': tunnel.generation,
                                                             'local_port': tunnel.server.server_port if ready else None, 'error': error})
                         except ControlError as failure:
-                            if failure.code != 409 and not tunnel.core.sandbox:
+                            if failure.code != 409 and not tunnel.core.extra:
                                 raise
                         except (OSError, ValueError):
-                            if not tunnel.core.sandbox:
+                            if not tunnel.core.extra:
                                 raise
                         return ready
                     with concurrent.futures.ThreadPoolExecutor() as pool:
@@ -1344,8 +1357,9 @@ def configure(folder, connection_file, activate, allow_private, mac_access=None,
     # Sandbox-only accounts have no VM address; their cores come from the website while awake.
     binding = [(connection.get('url') or 'sandboxes').rstrip('/'), (connection.get('account') or {}).get('id')]
     old = private_json(folder / 'config.json') if (folder / 'config.json').exists() else None
-    # The same account may move from its VM to sandboxes; another account never reuses this setup.
-    if old and old['binding'][1] != binding[1]:
+    # The same account may move from its VM to sandboxes, and a setup made without an account may sign in; another
+    # account never reuses this setup.
+    if old and old['binding'][1] not in (None, binding[1]):
         raise ValueError('Preview setup belongs to another account; use a separate directory')
     source = Path(__file__).resolve()
     target = folder / 'client.py'
@@ -1416,8 +1430,11 @@ def main():
             return
         config = private_json(folder / 'config.json')
         if not config.get('revoked', False):
-            # Best effort: a sleeping sandbox or an archived VM must never block sign-out.
+            # Best effort: a sleeping sandbox or an archived VM must never block sign-out. Registered machines stay paired:
+            # they outlive sign-out, and the app tells one to forget this device when it is removed.
             for core in cores(config):
+                if core.machine:
+                    continue
                 with contextlib.suppress(OSError, ValueError):
                     core.request('/device/' + config['device'], method='DELETE')
             config['revoked'] = True

@@ -3,8 +3,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@cloudroom/shared-ui/button";
 import { sdk } from "@/lib/sdk";
 
-/** Cloud only: the less prominent alternative to a Claude subscription. */
-export function ClaudeApiKeyForm() {
+/** Cloud only: the less prominent alternative to a Claude subscription. From a thread, the key goes to that thread's own Core. */
+export function ClaudeApiKeyForm({ threadId }: { threadId?: string | null } = {}) {
   const [open, setOpen] = useState(false);
   const [apiKey, setApiKey] = useState("");
   const client = useQueryClient();
@@ -14,6 +14,7 @@ export function ClaudeApiKeyForm() {
         action: "key",
         requestId: crypto.randomUUID(),
         apiKey: key,
+        ...(threadId ? { threadId } : {}),
       });
       if (result.state !== "connected")
         throw new Error(result.message ?? "Could not connect this API key.");

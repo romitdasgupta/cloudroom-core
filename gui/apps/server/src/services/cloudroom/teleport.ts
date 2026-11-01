@@ -29,9 +29,9 @@ import { pendingImportFork } from "../threads/thread-fork-history.js";
 import { stopThreadForCurrentState } from "../threads/thread-lifecycle.js";
 import { resolveThreadRuntimeCommandConfig } from "../threads/thread-runtime-config.js";
 import { cloudroomSystemPrompt } from "../threads/custom-instructions.js";
-import { cloudPromptLimit, cloudroom, promptPayload } from "./commands.js";
+import { cloudPromptLimit, cloudroom, copyKey, promptPayload } from "./commands.js";
 import { copyProject, planProjectCopy } from "./project-copy.js";
-import { SANDBOX_PREFIX } from "./sandboxes.js";
+import { SANDBOX_PREFIX, sandboxThread } from "./sandboxes.js";
 import {
   CloudroomError,
   type TeleportManifest,
@@ -153,11 +153,12 @@ class Teleport {
     providerId: string,
     execution: { model: string; reasoning: string; serviceTier: string },
     retry = false,
+    place?: string,
   ) {
     const harness = harnessOf(providerId)!;
     const separator = execution.model.indexOf("/");
     const result = await (
-      await cloudroom(this.deps).teleportClient(threadId)
+      await cloudroom(this.deps).teleportClient(threadId, place)
     ).checkTeleport({
       harness,
       model:
@@ -178,12 +179,14 @@ class Teleport {
         `${retry ? "Retry did not start." : "Teleport did not start; this thread stays local."} ${result.error}`,
       );
   }
+  /** `place` picks the Core, as for a new Cloud thread: a machine id, `cloud`, or omitted for the default. */
   async begin(
     threadId: string,
     choice?: { model: string; reasoning: string },
+    place?: string,
   ): Promise<TeleportProgress> {
     try {
-      return await this.start(threadId, choice);
+      return await this.start(threadId, choice, place);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.deps.logger.warn(
@@ -326,13 +329,14 @@ class Teleport {
   async check(
     threadId: string,
     choice?: { model: string; reasoning: string },
+    place?: string,
   ): Promise<{ model: string; reasoning: string; warnings: string[] }> {
     const existing = teleportProgress(this.deps.db, threadId);
     if (existing && !["cancelled", "complete"].includes(existing.phase))
       throw new ApiError(409, "teleport_in_progress", "Teleport is already running for this thread.");
     const { thread, environment, all, execution } = this.validate(threadId, choice);
     try {
-      await this.preflight(thread.id, thread.providerId, execution);
+      await this.preflight(thread.id, thread.providerId, execution, false, place);
     } catch (error) {
       if (error instanceof ApiError) throw error;
       throw new ApiError(409, "teleport_check_failed", `Teleport would not start. ${error instanceof Error ? error.message : String(error)}`);
@@ -352,6 +356,7 @@ class Teleport {
   private async start(
     threadId: string,
     choice?: { model: string; reasoning: string },
+    place?: string,
   ): Promise<TeleportProgress> {
     const existing = teleportProgress(this.deps.db, threadId);
     if (existing && existing.phase !== "cancelled") {
@@ -406,7 +411,7 @@ class Teleport {
     this.notify(threadId);
     this.checking.add(id);
     try {
-      await this.preflight(thread.id, thread.providerId, execution);
+      await this.preflight(thread.id, thread.providerId, execution, false, place);
     } catch (error) {
       this.dropChecking(threadId, id);
       throw error;
@@ -975,7 +980,8 @@ class Teleport {
       };
       this.save(state);
     }
-    const copy = await planProjectCopy(this.deps, client, state.threadId, state.manifest!.workspace, { localPath: state.workspacePath, teleport: true });
+    const coreUrl = binding(this.deps.db, state.threadId)?.coreUrl ?? "";
+    const copy = await planProjectCopy(this.deps, client, state.threadId, state.manifest!.workspace, { localPath: state.workspacePath, teleport: true, key: copyKey(sandboxThread(coreUrl), state.manifest!.workspace, coreUrl) });
     let remote = await client.prepareTeleport(state.manifest!);
     if (copy) copyProject(this.deps, client, copy);
     const cancelled = async () => {

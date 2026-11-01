@@ -93,7 +93,7 @@ export function CloudroomAccountSettings() {
           <p role="status">Finish signing in and confirm your account in the browser.</p>
           <div className="flex gap-2">{signInUrl && <Button variant="outline" onClick={() => openUrlInExternalBrowser(signInUrl)}>Open browser again</Button>}<Button variant="outline" disabled={action.isPending} onClick={() => action.mutate("cancel")}>Cancel sign-in</Button></div>
         </> : !status.data?.selfHosted && <div className="flex gap-2"><Button disabled={action.isPending || status.isPending || status.isError} onClick={() => action.mutate("sign-in")}>Sign in to Cloudroom</Button></div>}
-        {status.data && !account && !status.data.signingIn && <SelfHostedCoreForm connected={status.data.selfHosted === true} ready={status.data.ready} error={status.data.error} />}
+        {status.data && !account && !status.data.signingIn && <SelfHostedCoreForm connected={status.data.selfHosted === true} primary={status.data.machines?.find(machine => machine.id === "primary")} ready={status.data.ready} error={status.data.error} />}
       </div>
     </SettingsSection>}
     {signedIn && <BillingRow />}
@@ -123,7 +123,8 @@ function BillingRow() {
 export function MacAccessControl() {
   const status = useCloudroomAccount();
   const { current, select, saving } = useMacAccessLevel();
-  if (!status.data?.account || status.data.signingIn || status.data.macAccessSupported === false) return null;
+  // Registered Cores get Mac access too, so it shows without an account once one is connected.
+  if ((!status.data?.account && !status.data?.machines?.length) || status.data?.signingIn || status.data?.macAccessSupported === false) return null;
   return <div className="flex shrink-0 items-center gap-2">
     <span className="text-xs text-subtle-foreground/75 max-sm:hidden">{MAC_ACCESS_TITLE}</span>
     <DropdownMenu>

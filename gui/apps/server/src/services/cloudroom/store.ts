@@ -1,4 +1,4 @@
-import { and, eq, getTableColumns, inArray, isNull, sql } from "drizzle-orm";
+import { and, count, eq, getTableColumns, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { cloudroomCommands, cloudroomThreads, threads, threadPluginMetadata, type DbQueryConnection } from "@cloudroom/db";
 import type { ProjectCopyProgress, TeleportLocalStep } from "@cloudroom/domain";
 import { emitPluginThreadStatusEntered } from "../plugins/plugin-thread-events.js";
@@ -97,9 +97,16 @@ export function coreInUse(db: DbQueryConnection, coreUrl: string): boolean {
     .where(and(eq(cloudroomThreads.coreUrl, coreUrl), eq(threads.visibility, "visible"), isNull(threads.archivedAt), isNull(threads.deletedAt))).get());
 }
 
-/** Unstamped cloud threads belong to the signed-in account. Before another account signs in, they are stamped with the old one. */
-export function stampBindings(db: DbQueryConnection, accountId: string): void {
-  db.update(cloudroomThreads).set({ accountId }).where(isNull(cloudroomThreads.accountId)).run();
+/** Unstamped cloud threads belong to the signed-in account. Before another account signs in, they are stamped with the old one.
+ *  Threads on the user's own Cores (`keep`) belong to no account. */
+export function stampBindings(db: DbQueryConnection, accountId: string, keep: readonly string[] = []): void {
+  db.update(cloudroomThreads).set({ accountId }).where(and(isNull(cloudroomThreads.accountId), keep.length ? notInArray(cloudroomThreads.coreUrl, [...keep]) : undefined)).run();
+}
+
+/** Unarchived, undeleted threads on this Core address, hidden side chats included. A Core with any can't be removed. */
+export function coreThreadCount(db: DbQueryConnection, coreUrl: string): number {
+  return db.select({ n: count() }).from(cloudroomThreads).innerJoin(threads, eq(threads.id, cloudroomThreads.threadId))
+    .where(and(eq(cloudroomThreads.coreUrl, coreUrl), isNull(threads.archivedAt), isNull(threads.deletedAt))).get()?.n ?? 0;
 }
 
 export function saveBinding(db: DbQueryConnection, threadId: string, values: Partial<Omit<typeof cloudroomThreads.$inferSelect, "threadId">>): void {

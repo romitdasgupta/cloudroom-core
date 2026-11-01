@@ -4,8 +4,12 @@ import { Button } from "@cloudroom/shared-ui/button";
 import { Input } from "@cloudroom/shared-ui/input";
 import { sdk } from "@/lib/sdk";
 
+const SEVERAL_CORES = "To connect several Cores, use Settings → Machines.";
+
 /** Connects a core the user hosts, by URL and token, without a Cloudroom account (core docs/setup.md). */
-export function SelfHostedCoreForm({ connected, ready, error }: { connected: boolean; ready: boolean; error: string | null }) {
+/** `primary` is that Core's own probe, when the server lists it; `ready`/`error` describe where new threads go, which may be another Core. */
+export function SelfHostedCoreForm({ connected, primary, ...status }: { connected: boolean; primary?: { ready: boolean; error: string | null } | undefined; ready: boolean; error: string | null }) {
+  const { ready, error } = primary ?? status;
   const queryClient = useQueryClient();
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
@@ -23,6 +27,7 @@ export function SelfHostedCoreForm({ connected, ready, error }: { connected: boo
       <p role="status">{ready ? "Connected to your own Core." : error ?? "Your Core is not reachable right now."}</p>
       {failure && <p role="alert">{failure}</p>}
       <Button variant="outline" disabled={change.isPending} onClick={() => change.mutate("disconnect")}>Disconnect</Button>
+      <p className="text-xs text-muted-foreground">{SEVERAL_CORES}</p>
     </div>;
   }
   return <form className="space-y-2 border-t pt-3" onSubmit={(event) => { event.preventDefault(); change.mutate("connect"); }}>
@@ -32,5 +37,6 @@ export function SelfHostedCoreForm({ connected, ready, error }: { connected: boo
     <Input aria-label="Core API token" type="password" placeholder="API token" value={token} onChange={(event) => setToken(event.target.value)} autoComplete="off" />
     {failure && <p role="alert">{failure}</p>}
     <Button type="submit" variant="outline" disabled={change.isPending || !url.trim() || !token.trim()}>{change.isPending ? "Connecting…" : "Connect"}</Button>
+    <p className="text-xs text-muted-foreground">{SEVERAL_CORES}</p>
   </form>;
 }
